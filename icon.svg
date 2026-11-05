@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="WeChat chat export">
+  <defs>
+    <linearGradient id="wa-bubble" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5fd35a"/>
+      <stop offset="1" stop-color="#3aa93a"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="4" width="60" height="56" rx="13" fill="#f4f7f2"/>
+  <rect x="2" y="4" width="60" height="56" rx="13" fill="none" stroke="#cfe0cb" stroke-width="1.5"/>
+  <path d="M14 20.5a7 7 0 0 1 7-7h13a7 7 0 0 1 7 7v8a7 7 0 0 1-7 7h-6.4l-5.6 4.6v-4.6H21a7 7 0 0 1-7-7z"
+        fill="url(#wa-bubble)"/>
+  <circle cx="24" cy="21.5" r="1.9" fill="#ffffff"/>
+  <circle cx="31" cy="21.5" r="1.9" fill="#ffffff"/>
+  <circle cx="38" cy="21.5" r="1.9" fill="#ffffff"/>
+  <path d="M36.5 33.5a6.5 6.5 0 0 1 6.5-6.5h4.5a6.5 6.5 0 0 1 6.5 6.5v7a6.5 6.5 0 0 1-6.5 6.5h-1.5v3.8l-4.6-3.8H43a6.5 6.5 0 0 1-6.5-6.5z"
+        fill="#ffffff" opacity="0.92"/>
+  <circle cx="43" cy="34" r="1.6" fill="#6fbf5f"/>
+  <circle cx="48.5" cy="34" r="1.6" fill="#6fbf5f"/>
+  <path d="M17 49.5h16" stroke="#7f9d78" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M17 54.5h9" stroke="#7f9d78" stroke-width="2.2" stroke-linecap="round" opacity="0.7"/>
+</svg>

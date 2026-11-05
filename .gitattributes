@@ -1,0 +1,16 @@
+# Normalize line endings: LF in the repository, native on checkout.
+* text=auto eol=lf
+
+# Never let Git touch binary assets.
+*.dll binary
+*.png binary
+*.jpg binary
+*.webp binary
+
+# Documentation and JSON keep LF.
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.svg text eol=lf

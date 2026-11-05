@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+pnpm-lock.yaml
+
+# Local runtime state — never commit: holds the database key and personal settings.
+# Default location is %USERPROFILE%\.dsh\wechat-chat-plugin\, but these rules also
+# cover a key.txt / settings.json accidentally dropped into the checkout.
+key.txt
+*.key
+settings.json
+settings.json.bak
+
+# Exported archives — these contain private chat history.
+exports/
+微信聊天记录导出/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

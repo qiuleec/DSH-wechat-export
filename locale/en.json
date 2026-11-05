@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WeChat Chat Export",
+    "description": "Decrypt and export this machine's WeChat 4.x chat history to an HTML timeline, CSV table and plain text, also callable by the agent as a tool."
+  }
+}
