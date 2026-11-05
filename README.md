@@ -1,5 +1,10 @@
 # DSH-wechat-export · 微信聊天记录导出
 
+![license](https://img.shields.io/badge/license-MIT-blue)
+![platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
+![WeChat](https://img.shields.io/badge/WeChat-4.x-07c160)
+![deps](https://img.shields.io/badge/npm%20deps-0-brightgreen)
+
 一个 **DeepSeek Harness** 插件：在 **左侧栏** 加一个入口，把本机
 微信 4.x（Windows）的聊天记录解密导出为 **网页时间线（HTML）**、**CSV 表格** 与 **纯文本（TXT）**。
 同一套能力同时注册为 agent 工具 `wechat_archive`，可以直接让 agent 帮你列出、筛选、预览、导出。
@@ -49,6 +54,9 @@ agent 会调用 `plugin_manager` 的 `install_bundle`，把该目录作为包源
 plugin_manager action=install_bundle target=<该目录的绝对路径>
 plugin_manager action=set_bundle    target=@local/wechat-archive enabled=true
 ```
+
+> 包名是 `@local/wechat-archive`（`@local/` 是「本地目录安装」的约定前缀，不入 npm 仓库）；
+> bundle 行 id 为 `wechat-archive`，也就是左侧栏入口的 id。
 
 安装完成后，左侧栏出现「微信聊天记录导出」图标；`application` 为 `applied` 才算真正装载成功
 （本地目录安装是符号链接，之后改代码无需重装，但改 **Host** 代码要 `set_bundle enabled=false` 再
@@ -212,7 +220,7 @@ lib/service.js      面板与工具共用的服务方法（所有操作返回 {o
 locale/{zh,en}.json 插件名称与描述（Harness 的插件市场读取这里）
 icon.svg            左侧栏与插件行的图标
 bin/wx_key.dll      密钥捕获组件（第三方，CC BY 4.0，见文末署名）
-test/               10 个测试文件，427 条断言，不依赖真实微信数据
+test/               9 个测试文件 + fixture.mjs，共 427 条断言，不依赖真实微信数据
 ```
 
 ## 常见问题
@@ -245,6 +253,12 @@ node test/routes.test.mjs      # 同源校验、方法/坏 JSON/超长 body
 node test/tool.test.mjs        # agent 工具的 8 个 action
 node test/render.test.mjs      # 客户端：slot 注册、图标、面板渲染、样式生效与清理
 node test/realdb.test.mjs      # 有真实密钥时校验真实库；没有则自动跳过
+```
+
+一次跑全部的 Bash 片段：
+
+```bash
+for f in test/*.test.mjs; do printf '%-28s ' "$f"; node "$f" >/dev/null 2>&1 && echo ok || echo FAIL; done
 ```
 
 共 427 条断言。测试不依赖真实微信数据：`test/fixture.mjs` 会临时造一个 80 字节 reserve 的明文库，再按 SQLCipher 4
