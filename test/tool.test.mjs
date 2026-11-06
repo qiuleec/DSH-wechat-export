@@ -65,7 +65,7 @@ try {
 
   assert(plugin.inject.includes('webServer'), 'the plugin declares its webServer dependency');
   assert(tools.length === 1, 'exactly one agent tool is registered');
-  assert(routes.length === 11, `the panel exposes ${routes.length} HTTP routes`);
+  assert(routes.length === 13, `the panel exposes ${routes.length} HTTP routes`);
   assert(routes.every((route) => route.path.startsWith('/api/wechat-chat/')), 'every route lives under the plugin prefix');
   assert(new Set(routes.map((route) => route.path)).size === routes.length, 'no two routes collide on a path');
 
@@ -241,6 +241,61 @@ try {
   assert(statusProgress.summary.includes('增量导出'), 'status mentions the incremental progress state');
   assert(statusProgress.summary.includes('默认勾选'), 'status mentions the default tick behaviour');
   assert(Array.isArray(statusProgress.data.deselected), 'status reports the unticked set the agent must respect');
+
+  /* ---------------------------- scheduled export ---------------------------- */
+
+  assert(tool.parameters.properties.times, 'the tool accepts schedule times');
+  assert(tool.parameters.properties.intervalHours, 'the tool accepts a schedule interval');
+  assert(tool.parameters.properties.mode.enum.includes('daily'), 'the tool can pick the daily mode');
+  assert(tool.parameters.properties.mode.enum.includes('interval'), 'the tool can pick the interval mode');
+
+  const scheduleRead = await run({ action: 'schedule' });
+  assert(scheduleRead.ok === true, 'the schedule action reports without changing anything');
+  assert(scheduleRead.summary.includes('已关闭'), 'a fresh schedule reads as off');
+  assert(scheduleRead.summary.includes('全部会话'), 'the default scope is every conversation');
+  assert(scheduleRead.data.schedule.enabled === false, 'the payload carries the config');
+
+  const scheduleSaved = await run({
+    action: 'schedule',
+    enabled: true,
+    mode: 'daily',
+    times: ['08:00', '20:00'],
+    kinds: ['group'],
+    days: 7,
+    incremental: true,
+  });
+  assert(scheduleSaved.ok === true, 'the agent can arm the schedule');
+  assert(scheduleSaved.data.schedule.enabled === true, 'the payload reflects it');
+  assert(scheduleSaved.data.schedule.times.join(',') === '08:00,20:00', 'the times are stored');
+  assert(scheduleSaved.summary.includes('已开启'), 'the summary says it is armed');
+  assert(scheduleSaved.summary.includes('群聊'), 'the summary names the scope');
+  assert(scheduleSaved.summary.includes('下次运行'), 'the summary states when it will next run');
+
+  const scheduleInterval = await run({ action: 'schedule', mode: 'interval', intervalHours: 4 });
+  assert(scheduleInterval.data.schedule.mode === 'interval', 'the mode can be switched to interval');
+  assert(scheduleInterval.summary.includes('4'), 'the summary names the cadence');
+
+  const scheduleRejected = await run({ action: 'schedule', times: ['not-a-time'] });
+  assert(scheduleRejected.ok === false && scheduleRejected.code === 'BAD_INPUT', 'an invalid time is refused');
+  assert(scheduleRejected.summary.includes('无法保存'), 'and says so plainly');
+
+  // The fixture's messages are dated 2023, so a 7-day window is legitimately
+  // empty; widen the scope to exercise the run itself.
+  await run({ action: 'schedule', days: 0, kinds: [], mode: 'daily', times: ['08:00'] });
+  const runScheduled = await run({ action: 'run_schedule' });
+  assert(runScheduled.ok === true, 'a scheduled run with a key and conversations succeeds');
+  assert(runScheduled.data.exported.length > 0, 'it actually exported something');
+  assert(runScheduled.summary.includes('定时导出已执行'), 'the summary reports the run');
+
+  const scheduleWithHistory = await run({ action: 'schedule' });
+  assert(scheduleWithHistory.data.runs.length >= 1, 'the run appears in the history');
+  assert(scheduleWithHistory.summary.includes('最近几次'), 'the summary shows the history');
+  assert(scheduleWithHistory.data.schedule.lastRunAt !== '', 'the last-run stamp is set');
+
+  const scheduleOff = await run({ action: 'schedule', enabled: false });
+  assert(scheduleOff.data.schedule.enabled === false, 'the agent can disarm the schedule');
+  assert(scheduleOff.summary.includes('已关闭'), 'and the summary says so');
+  assert(scheduleOff.data.nextRunAt === '', 'a disarmed schedule has no next run');
 
   /* ------------------------------- unknown ------------------------------- */
   const unknown = await run({ action: 'nope' });

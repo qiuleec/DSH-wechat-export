@@ -13,6 +13,8 @@ import {
   captureDatabaseKey,
   describeEnvironment,
   describeProgress,
+  describeSchedule,
+  describeScheduleRuns,
   describeSelection,
   exportConversations,
   forgetKey,
@@ -21,10 +23,13 @@ import {
   readSettings,
   resetExportProgress,
   revealDirectory,
+  runScheduledExportNow,
   setExportDirectory,
+  setSchedule,
   setSelection,
   writeSettings,
 } from './lib/service.js';
+import { startScheduler } from './lib/scheduler.js';
 import { filterByKind } from './lib/wechat.js';
 
 /** Short label shown for each conversation kind in agent output. */
@@ -105,6 +110,39 @@ function isTrustedRequest(request) {
 /** Send one SSE frame. */
 function sse(response, payload) {
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+/**
+ * The armed timer, if any.
+ *
+ * Kept at module scope so a settings save can replace it immediately: the
+ * scheduler reads the schedule when it wakes, so a config change would
+ * otherwise only take effect after the previously computed moment — the panel
+ * would show the new time while the old timer was still in flight.
+ */
+let schedulerDispose = null;
+
+/** Recent scheduler events, for the panel's diagnostic line. */
+const schedulerLog = [];
+
+/**
+ * (Re)arm the scheduler from the stored config.
+ *
+ * The dispose function is registered once by `apply`, not here: a save that
+ * re-armed through `ctx.effect` would leak one effect per settings change.
+ */
+function rearm() {
+  if (schedulerDispose !== null) {
+    schedulerDispose();
+    schedulerDispose = null;
+  }
+  schedulerDispose = startScheduler({
+    execute: () => runScheduledExportNow({ reason: 'scheduled' }),
+    onEvent: (event) => {
+      schedulerLog.push({ at: new Date().toISOString(), ...event });
+      if (schedulerLog.length > 20) schedulerLog.splice(0, schedulerLog.length - 20);
+    },
+  });
 }
 
 /**
@@ -233,6 +271,37 @@ function registerRoutes(ctx) {
       },
     },
     {
+      // The schedule is plugin state too: the panel edits it, the Host validates
+      // and arms it. GET also reports the next run and the recent history, so
+      // one round trip paints the whole section.
+      path: `${API_PREFIX}/schedule`,
+      handler: async (request, response) => {
+        if (request.method === 'GET') return sendJson(response, 200, await describeSchedule());
+        if (request.method !== 'POST') return sendJson(response, 405, { ok: false, error: 'GET or POST only' });
+        const body = await readJsonBody(request);
+        if (body === null) return sendJson(response, 400, { ok: false, error: '请求体应为 JSON 对象。' });
+        const saved = await setSchedule(body);
+        // A save while the scheduler is armed must not wait for the old timer:
+        // the panel showing "next run 09:00" for a schedule just switched to
+        // 21:00 would be a lie. Re-arming from the fresh config is cheap.
+        if (saved.ok) rearm();
+        sendJson(response, 200, saved);
+      },
+    },
+    {
+      // "Run now": the same code path the timer uses, so a manual run proves the
+      // schedule works instead of exercising a second implementation.
+      path: `${API_PREFIX}/schedule/run`,
+      handler: async (request, response) => {
+        if (request.method !== 'POST') return sendJson(response, 405, { ok: false, error: 'POST only' });
+        try {
+          sendJson(response, 200, await runScheduledExportNow({ reason: 'manual' }));
+        } catch (error) {
+          sendJson(response, 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+    },
+    {
       path: `${API_PREFIX}/reveal`,
       handler: async (request, response) => {
         if (request.method !== 'POST') return sendJson(response, 405, { ok: false, error: 'POST only' });
@@ -313,10 +382,24 @@ Actions:
 - "set_out_dir": point exports at a chosen directory (created if missing), or reset to the plugin default
   with an empty outDir.
 - "progress": the per-conversation incremental watermarks (what the next incremental export would pick up). \`reset: true\` clears them so the next incremental run covers full history.
+- "schedule": report the scheduled export (times, scope, next run, recent runs). Pass \`enabled\` / \`mode\` / \`times\` / \`intervalHours\` / \`days\` / \`kinds\` / \`incremental\` to change it; \`mode\` is "daily" (fixed clock times, several allowed) or "interval" (every N hours), and an empty patch just reports.
+- "run_schedule": run the scheduled export once, right now, through the exact code path the timer uses.
 - "open_folder": reveal the export directory in File Explorer.
 - "forget": delete the stored key.`;
 
-const ACTIONS = ['status', 'list', 'export', 'preview', 'progress', 'capture', 'open_folder', 'forget', 'set_out_dir'];
+const ACTIONS = [
+  'status',
+  'list',
+  'export',
+  'preview',
+  'progress',
+  'schedule',
+  'run_schedule',
+  'capture',
+  'open_folder',
+  'forget',
+  'set_out_dir',
+];
 
 /**
  * Build the agent-facing tool definition.
@@ -366,6 +449,21 @@ function buildTool(ctx) {
         selfName: { type: 'string', description: 'How the user is labelled in exports. Defaults to 我.' },
         wxid: { type: 'string', description: 'Conversation for "preview".' },
         count: { type: 'number', description: 'How many recent messages "preview" returns (default 30).' },
+        enabled: { type: 'boolean', description: 'For "schedule": arm (true) or disarm (false) the scheduled export.' },
+        mode: {
+          type: 'string',
+          enum: ['daily', 'interval'],
+          description: 'For "schedule": "daily" fires at fixed clock times, "interval" every intervalHours.',
+        },
+        times: {
+          type: 'array',
+          description: 'For "schedule" in daily mode: local clock times as "HH:mm", at least one.',
+          items: { type: 'string' },
+        },
+        intervalHours: {
+          type: 'number',
+          description: 'For "schedule" in interval mode: hours between runs (1 to 168).',
+        },
       },
       required: ['action'],
     },
@@ -404,6 +502,12 @@ function buildTool(ctx) {
             `增量导出：${status.progressTracked > 0 ? `已有 ${status.progressTracked} 个会话的进度记录` : '尚未记录进度'}`,
             `默认勾选：全部会话自动勾选${status.deselected.length > 0 ? `，其中 ${status.deselected.length} 个已被取消` : ''}`,
           ];
+          const scheduled = await describeSchedule();
+          lines.push(
+            scheduled.schedule.enabled
+              ? `定时导出：已开启（${scheduled.timing}，下次 ${scheduled.nextRunAt.replace('T', ' ').slice(0, 16)}）`
+              : '定时导出：未开启',
+          );
           if (!status.keyPresent) lines.push('下一步：需要 action "capture"，请用户先退出微信并同意重新登录一次。');
           return {
             ok: true,
@@ -539,6 +643,58 @@ function buildTool(ctx) {
             data: progress,
           };
         }
+        case 'schedule': {
+          const patchKeys = ['enabled', 'mode', 'times', 'intervalHours', 'days', 'kinds', 'incremental'];
+          const patch = {};
+          for (const key of patchKeys) {
+            if (args[key] !== undefined) patch[key] = args[key];
+          }
+          if (Object.keys(patch).length > 0) {
+            const saved = await setSchedule(patch);
+            if (!saved.ok) {
+              return { ok: false, error: saved.error, code: saved.code, summary: `无法保存定时导出：${saved.error}`, data: saved };
+            }
+            rearm();
+          }
+          const report = await describeSchedule();
+          const schedule = report.schedule;
+          const next = report.nextRunAt
+            ? new Date(report.nextRunAt).toISOString().replace('T', ' ').slice(0, 16)
+            : '未排期';
+          const scope = schedule.kinds.length > 0
+            ? schedule.kinds.map((kind) => KIND_LABELS[kind] ?? kind).join('、')
+            : '全部类型';
+          const within = Number(schedule.days) > 0 ? `最近 ${schedule.days} 天活跃的会话` : '全部会话';
+          const lines = [
+            `定时导出：${schedule.enabled ? '已开启' : '已关闭'}`,
+            `时间：${report.timing}`,
+            `范围：${within}（${scope}）`,
+            `模式：${schedule.incremental ? '增量（只写新消息）' : '完整导出'}`,
+            `下次运行：${next}`,
+            `上次运行：${schedule.lastRunAt ? schedule.lastRunAt.replace('T', ' ').slice(0, 19) : '还没有运行过'}`,
+          ];
+          if (schedule.enabled && !report.keyPresent) lines.push('注意：还没有数据库密钥，到点会跳过并在历史里记一条失败。');
+          if (report.runs.length > 0) {
+            const recent = report.runs
+              .slice(0, 5)
+              .map((run) => `${run.at.replace('T', ' ').slice(0, 16)} ${run.ok ? '成功' : '失败'}：${run.message ?? ''}`)
+              .join('\n');
+            lines.push(`最近几次：\n${recent}`);
+          }
+          return { ok: true, summary: lines.join('\n'), data: report };
+        }
+        case 'run_schedule': {
+          const result = await runScheduledExportNow({ reason: 'manual' });
+          return {
+            ok: result.ok === true,
+            error: result.ok ? undefined : (result.error ?? '定时导出没有成功'),
+            code: result.code,
+            summary: result.ok
+              ? `定时导出已执行：${result.message}`
+              : `定时导出没有成功：${result.message ?? result.error ?? ''}`,
+            data: result,
+          };
+        }
         case 'open_folder': {
           const environment = await describeEnvironment();
           const target = args.outDir ?? environment.defaultOutDir;
@@ -584,6 +740,17 @@ function buildTool(ctx) {
  */
 export function apply(ctx) {
   registerRoutes(ctx);
+
+  // The timer runs inside this plugin rather than through the `schedule`
+  // service: that service delivers prompts to a session, and an export writes
+  // files, which must happen whether or not a conversation is open.
+  rearm();
+  ctx.effect(() => () => {
+    if (schedulerDispose !== null) {
+      schedulerDispose();
+      schedulerDispose = null;
+    }
+  }, 'wechat-archive scheduler');
 
   // `tools` is optional: a profile can run the panel without an agent tool
   // registry, and the panel must still work there.

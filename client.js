@@ -100,9 +100,43 @@ window.__ModuleLoader__.load({
       'step3.incrementalTracked': '已有 {n} 个会话的导出进度，本次只写入更新的消息',
       'step3.incrementalFirstRun': '还没有导出进度：第一次增量导出会覆盖全部历史',
       'step3.incrementalReset': '清除导出进度',
-      'step3.incrementalResetDone': '已清除导出进度。',
+      'step4.title': '第 4 步 · 定时导出（可选）',
+      'step4.body': '让插件在后台按时间自动导出，无需每次手动点。导出目录与第 3 步的主文件夹相同，按日期建子文件夹；DSH 不在运行时不会触发，重新打开后若错过不久会补跑一次。',
+      'step4.enable': '开启定时导出',
+      'step4.disabled': '定时导出未开启',
+      'step4.mode': '触发方式',
+      'step4.modeDaily': '每天固定时间',
+      'step4.modeInterval': '固定间隔',
+      'step4.times': '每天几点',
+      'step4.timesHint': '24 小时制，可用逗号分隔多个时间点，例如 09:00, 21:00',
+      'step4.interval': '每隔几小时',
+      'step4.intervalHint': '1 到 168 小时',
+      'step4.scopeDays': '导出范围',
+      'step4.scopeAll': '全部会话',
+      'step4.scopeRecent': '最近 {n} 天活跃的会话',
+      'step4.kinds': '会话类型',
+      'step4.incremental': '增量导出',
+      'step4.incrementalHint': '只写上次导出之后的新消息；关闭则每次完整重写',
+      'step4.save': '保存定时设置',
+      'step4.saving': '正在保存…',
+      'step4.saved': '定时设置已保存。',
+      'step4.runNow': '立即运行一次',
+      'step4.running': '正在运行…',
+      'step4.next': '下次运行',
+      'step4.last': '上次运行',
+      'step4.never': '还没有运行过',
+      'step4.notScheduled': '未排期',
+      'step4.history': '运行记录',
+      'step4.noHistory': '还没有运行记录',
+      'step4.needKey': '还没有数据库密钥，到点会跳过；建议先完成第 1 步。',
+      'step4.dailyAt': '每天 {times} 各导出一次',
+      'step4.everyHours': '每 {n} 小时导出一次',
+      'step4.badTime': '时间格式应为 HH:mm，例如 09:00',
+      'step4.ok': '成功',
+      'step4.failed': '失败',
       'step3.unchanged': '没有新消息',
       'step3.unchangedBody': '这些会话在上次导出之后没有新增内容。',
+      'step3.incrementalResetDone': '已清除导出进度。',
 
       'preview.title': '预览最近消息',
       'preview.loading': '正在读取…',
@@ -204,6 +238,41 @@ window.__ModuleLoader__.load({
       'step3.incrementalFirstRun': 'No export mark yet: the first incremental run covers the full history',
       'step3.incrementalReset': 'Clear export marks',
       'step3.incrementalResetDone': 'Export marks cleared.',
+
+      'step4.title': 'Step 4 · Scheduled export (optional)',
+      'step4.body': 'Let the plugin export on a timer in the background instead of clicking every time. Files go to the same master folder as step 3, in a dated subfolder. Nothing runs while DSH is closed; on the next start a run missed by a short while is caught up once.',
+      'step4.enable': 'Enable scheduled export',
+      'step4.disabled': 'Scheduled export is off',
+      'step4.mode': 'Trigger',
+      'step4.modeDaily': 'Fixed times each day',
+      'step4.modeInterval': 'Fixed interval',
+      'step4.times': 'Times of day',
+      'step4.timesHint': '24-hour clock, comma-separated for several, for example 09:00, 21:00',
+      'step4.interval': 'Every how many hours',
+      'step4.intervalHint': '1 to 168 hours',
+      'step4.scopeDays': 'Scope',
+      'step4.scopeAll': 'All conversations',
+      'step4.scopeRecent': 'Conversations active in the last {n} days',
+      'step4.kinds': 'Conversation kinds',
+      'step4.incremental': 'Incremental export',
+      'step4.incrementalHint': 'Write only messages newer than the last export; off rewrites everything',
+      'step4.save': 'Save schedule',
+      'step4.saving': 'Saving…',
+      'step4.saved': 'Schedule saved.',
+      'step4.runNow': 'Run once now',
+      'step4.running': 'Running…',
+      'step4.next': 'Next run',
+      'step4.last': 'Last run',
+      'step4.never': 'Never run yet',
+      'step4.notScheduled': 'Not scheduled',
+      'step4.history': 'Run history',
+      'step4.noHistory': 'No runs yet',
+      'step4.needKey': 'No database key yet, so runs will be skipped. Finish step 1 first.',
+      'step4.dailyAt': 'Every day at {times}',
+      'step4.everyHours': 'Every {n} hours',
+      'step4.badTime': 'Use HH:mm, for example 09:00',
+      'step4.ok': 'ok',
+      'step4.failed': 'failed',
       'step3.unchanged': 'Nothing new',
       'step3.unchangedBody': 'These conversations had no new messages since the last export.',
 
@@ -457,6 +526,16 @@ window.__ModuleLoader__.load({
       const [exportError, setExportError] = React.useState(null);
       const [preview, setPreview] = React.useState(null);
       const [previewing, setPreviewing] = React.useState(false);
+      // Scheduled export: the Host owns the config, so the panel keeps a server
+      // report plus a local draft that is only sent when the user saves. Editing
+      // a field must not re-arm the timer on every keystroke.
+      const [scheduleInfo, setScheduleInfo] = React.useState(null);
+      const [scheduleDraft, setScheduleDraft] = React.useState(null);
+      const [savingSchedule, setSavingSchedule] = React.useState(false);
+      const [scheduleNotice, setScheduleNotice] = React.useState(null);
+      const [scheduleError, setScheduleError] = React.useState(null);
+      const [runningSchedule, setRunningSchedule] = React.useState(false);
+      const [scheduleRun, setScheduleRun] = React.useState(null);
       const logRef = React.useRef(null);
       const sourceRef = React.useRef(null);
 
@@ -506,6 +585,34 @@ window.__ModuleLoader__.load({
           return null;
         }
       }, []);
+
+      // The draft is seeded from the Host report once and then left alone: a
+      // reload after "run once now" must not throw away what the user typed but
+      // has not saved yet.
+      const loadSchedule = React.useCallback(async () => {
+        try {
+          const value = await api('/schedule');
+          if (value && value.ok) {
+            setScheduleInfo(value);
+            setScheduleDraft((current) => current ?? {
+              enabled: value.schedule.enabled,
+              mode: value.schedule.mode,
+              times: (value.schedule.times || []).join(', '),
+              intervalHours: String(value.schedule.intervalHours),
+              days: String(value.schedule.days ?? 0),
+              kinds: [...(value.schedule.kinds || [])],
+              incremental: value.schedule.incremental
+            });
+          }
+          return value;
+        } catch (error) {
+          return null;
+        }
+      }, []);
+
+      React.useEffect(() => {
+        void loadSchedule();
+      }, [loadSchedule]);
 
       React.useEffect(() => {
         let alive = true;
@@ -666,6 +773,72 @@ window.__ModuleLoader__.load({
           }
         } catch (error) {
           setProgressNotice(error.message);
+        }
+      };
+
+      // Saving parses the free-text times field here rather than in the Host so
+      // the user gets the error next to the field they typed in; the Host still
+      // validates, because the agent tool writes the same config.
+      const saveSchedule = async () => {
+        if (savingSchedule || scheduleDraft === null) return;
+        setSavingSchedule(true);
+        setScheduleNotice(null);
+        setScheduleError(null);
+        const times = String(scheduleDraft.times || '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
+        if (scheduleDraft.mode === 'daily' && times.length === 0) {
+          setScheduleError(t('step4.badTime'));
+          setSavingSchedule(false);
+          return;
+        }
+        try {
+          const value = await api('/schedule', {
+            method: 'POST',
+            body: JSON.stringify({
+              enabled: scheduleDraft.enabled === true,
+              mode: scheduleDraft.mode,
+              times,
+              intervalHours: Number(scheduleDraft.intervalHours),
+              days: Number(scheduleDraft.days),
+              kinds: [...scheduleDraft.kinds],
+              incremental: scheduleDraft.incremental === true
+            })
+          });
+          if (value && value.ok) {
+            // Re-read the full report: the POST answers with the saved config,
+            // but the panel also paints the next run and the history, which the
+            // GET carries.
+            await loadSchedule();
+            setScheduleNotice(t('step4.saved'));
+            await loadStatus();
+          } else {
+            setScheduleError((value && value.error) || t('error.title'));
+          }
+        } catch (error) {
+          setScheduleError(error.message);
+        } finally {
+          setSavingSchedule(false);
+        }
+      };
+
+      const runScheduleNow = async () => {
+        if (runningSchedule) return;
+        setRunningSchedule(true);
+        setScheduleNotice(null);
+        setScheduleError(null);
+        setScheduleRun(null);
+        try {
+          const value = await api('/schedule/run', { method: 'POST', body: '{}' });
+          setScheduleRun(value);
+          if (!value || value.ok !== true) setScheduleError((value && (value.message || value.error)) || t('error.title'));
+          await loadSchedule();
+          await loadStatus();
+        } catch (error) {
+          setScheduleError(error.message);
+        } finally {
+          setRunningSchedule(false);
         }
       };
 
@@ -1079,6 +1252,150 @@ window.__ModuleLoader__.load({
           : h('p', { className: 'wa-cardBody' }, t('step3.none'))
       );
 
+      // Scheduled export. The card is always rendered — a user who has not
+      // armed it must be able to see that it exists and is off, rather than
+      // hunting for a feature that only appears after it is enabled.
+      const scheduleCard = (() => {
+        const saved = scheduleInfo && scheduleInfo.schedule ? scheduleInfo.schedule : null;
+        const draft = scheduleDraft ?? {
+          enabled: saved ? saved.enabled : false,
+          mode: saved ? saved.mode : 'daily',
+          times: saved ? saved.times.join(', ') : '09:00',
+          intervalHours: saved ? String(saved.intervalHours) : '6',
+          days: saved ? String(saved.days) : '0',
+          kinds: saved ? [...saved.kinds] : [],
+          incremental: saved ? saved.incremental : true
+        };
+        const patchDraft = (patch) => setScheduleDraft({ ...draft, ...patch });
+        const toggleKind = (kind) => patchDraft({
+          kinds: draft.kinds.includes(kind)
+            ? draft.kinds.filter((value) => value !== kind)
+            : [...draft.kinds, kind]
+        });
+        const nextLabel = scheduleInfo && scheduleInfo.nextRunAt
+          ? formatTime(Date.parse(scheduleInfo.nextRunAt) / 1000)
+          : t('step4.notScheduled');
+        const lastLabel = saved && saved.lastRunAt
+          ? formatTime(Date.parse(saved.lastRunAt) / 1000)
+          : t('step4.never');
+        const runs = (scheduleInfo && scheduleInfo.runs) || [];
+        return h('div', { className: 'wa-card' },
+          h('div', { className: 'wa-cardHead' },
+            h('h2', { className: 'wa-cardTitle' }, t('step4.title')),
+            h('div', { className: 'wa-actions' },
+              h('button', {
+                type: 'button', className: 'wa-btn',
+                disabled: runningSchedule,
+                onClick: runScheduleNow
+              }, runningSchedule ? t('step4.running') : t('step4.runNow')),
+              h('button', {
+                type: 'button', className: 'wa-btn wa-btnPrimary',
+                disabled: savingSchedule,
+                onClick: saveSchedule
+              }, savingSchedule ? t('step4.saving') : t('step4.save'))
+            )
+          ),
+          h('p', { className: 'wa-cardBody' }, t('step4.body')),
+          h('label', { className: 'wa-field', title: t('step4.enable') },
+            h('input', {
+              className: 'wa-check wa-checkInline', type: 'checkbox', checked: draft.enabled,
+              onChange: (event) => patchDraft({ enabled: event.target.checked })
+            }),
+            h('span', { className: 'wa-kvLabel' }, t('step4.enable'))
+          ),
+          // The state is stated in words as well as by the checkbox: "is this
+          // actually armed?" is the one question the card must answer at a
+          // glance.
+          h('p', { className: draft.enabled ? 'wa-notice' : 'wa-hint' },
+            draft.enabled
+              ? (scheduleInfo && scheduleInfo.timing ? scheduleInfo.timing : t('step4.enable'))
+              : t('step4.disabled')),
+          saved === null
+            ? null
+            : h('p', { className: 'wa-hint' },
+                `${t('step4.next')}：${nextLabel} · ${t('step4.last')}：${lastLabel}`),
+          draft.enabled && scheduleInfo && scheduleInfo.keyPresent === false
+            ? h('p', { className: 'wa-err' }, t('step4.needKey'))
+            : null,
+          // Mode switch: the two modes are exclusive by construction, so the
+          // fields below only show the ones that apply.
+          h('div', { className: 'wa-toolbar' },
+            h('span', { className: 'wa-kvLabel' }, t('step4.mode')),
+            h('button', {
+              type: 'button', className: 'wa-chip',
+              'data-mode': 'daily',
+              'data-active': draft.mode === 'daily' ? 'true' : 'false',
+              onClick: () => patchDraft({ mode: 'daily' })
+            }, t('step4.modeDaily')),
+            h('button', {
+              type: 'button', className: 'wa-chip',
+              'data-mode': 'interval',
+              'data-active': draft.mode === 'interval' ? 'true' : 'false',
+              onClick: () => patchDraft({ mode: 'interval' })
+            }, t('step4.modeInterval'))
+          ),
+          draft.mode === 'daily'
+            ? h('label', { className: 'wa-field wa-fieldGrow', title: t('step4.timesHint') },
+                h('span', { className: 'wa-kvLabel' }, t('step4.times')),
+                h('input', {
+                  className: 'wa-input', type: 'text', value: draft.times,
+                  placeholder: t('step4.timesHint'),
+                  onChange: (event) => patchDraft({ times: event.target.value })
+                })
+              )
+            : h('label', { className: 'wa-field', title: t('step4.intervalHint') },
+                h('span', { className: 'wa-kvLabel' }, t('step4.interval')),
+                h('input', {
+                  className: 'wa-input', type: 'number', min: 1, max: 168, value: draft.intervalHours,
+                  style: { width: 100 },
+                  onChange: (event) => patchDraft({ intervalHours: event.target.value })
+                })
+              ),
+          h('div', { className: 'wa-toolbar' },
+            h('span', { className: 'wa-kvLabel' }, t('step4.scopeDays')),
+            h('select', {
+              className: 'wa-input', value: draft.days, style: { width: 120 },
+              onChange: (event) => patchDraft({ days: event.target.value })
+            },
+              h('option', { value: '0' }, t('step4.scopeAll')),
+              h('option', { value: '3' }, t('step4.scopeRecent').replace('{n}', '3')),
+              h('option', { value: '7' }, t('step4.scopeRecent').replace('{n}', '7')),
+              h('option', { value: '30' }, t('step4.scopeRecent').replace('{n}', '30'))
+            )
+          ),
+          // Scope types reuse step 2's chips so "what will run" is expressed
+          // with the same words the user filtered the list with.
+          h('div', { className: 'wa-kinds' },
+            h('span', { className: 'wa-kindsLabel' }, t('step4.kinds')),
+            KIND_ORDER.map((kind) => h('button', {
+              key: kind, type: 'button', className: 'wa-chip',
+              'data-active': draft.kinds.includes(kind) ? 'true' : 'false',
+              onClick: () => toggleKind(kind)
+            }, t(`step2.kind.${kind}`)))
+          ),
+          h('label', { className: 'wa-field', title: t('step4.incrementalHint') },
+            h('input', {
+              className: 'wa-check wa-checkInline', type: 'checkbox', checked: draft.incremental,
+              onChange: (event) => patchDraft({ incremental: event.target.checked })
+            }),
+            h('span', { className: 'wa-kvLabel' }, t('step4.incremental'))
+          ),
+          scheduleNotice !== null ? h('p', { className: 'wa-notice' }, scheduleNotice) : null,
+          scheduleError !== null ? h('p', { className: 'wa-err' }, scheduleError) : null,
+          scheduleRun !== null
+            ? h('p', { className: 'wa-cardBody' }, scheduleRun.message || scheduleRun.error || '')
+            : null,
+          runs.length > 0
+            ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                h('p', { className: 'wa-kvLabel', style: { margin: 0 } }, t('step4.history')),
+                runs.slice(0, 5).map((entry, index) => h('p', {
+                  key: `${entry.at}-${index}`, className: 'wa-cardBody', style: { margin: 0, fontSize: 12 }
+                }, `${formatTime(Date.parse(entry.at) / 1000)} · ${entry.ok ? t('step4.ok') : t('step4.failed')} · ${entry.message ?? ''}`))
+              )
+            : h('p', { className: 'wa-hint' }, t('step4.noHistory'))
+        );
+      })();
+
       const previewModal = preview === null ? null : h('div', {
         className: 'wa-overlay',
         onClick: () => setPreview(null)
@@ -1119,7 +1436,8 @@ window.__ModuleLoader__.load({
           statusCard,
           captureCard,
           listCard,
-          exportCard
+          exportCard,
+          scheduleCard
         ),
         previewModal
       );

@@ -563,6 +563,114 @@ const rowTags = populatedShape.attrs.filter((attrs) => attrs.tag === 'span' && a
 assert(rowTags.length === 5, `every conversation row is tagged with its kind (got ${rowTags.length})`);
 assert(rowTags.every((attrs) => typeof attrs['data-kind'] === 'string'), 'each row tag names a kind');
 
+/* ---------------------------- scheduled export ---------------------------- */
+
+// The card must be visible even while the schedule is off, or a user could not
+// discover the feature at all.
+assert(populatedShape.text.includes('第 4 步 · 定时导出（可选）'), 'the scheduled-export card is always rendered');
+assert(populatedShape.text.includes('定时导出未开启'), 'or a chip says it is off');
+assert(populatedShape.text.includes('每天固定时间'), 'the daily mode is offered');
+assert(populatedShape.text.includes('固定间隔'), 'the interval mode is offered');
+
+const scheduleSaveButton = populatedShape.attrs.find(
+  (attrs) => attrs.tag === 'button' && attrs.className === 'wa-btn wa-btnPrimary'
+    && populatedShape.text.includes('保存定时设置'),
+);
+assert(scheduleSaveButton !== undefined, 'the schedule card has a save button');
+const runNowButton = populatedShape.attrs.find((attrs) => attrs.tag === 'button');
+assert(populatedShape.text.includes('立即运行一次'), 'the schedule card offers a manual run');
+assert(populatedShape.attrs.filter((attrs) => attrs.tag === 'button' && typeof attrs.onClick === 'function').length > 0,
+  'the schedule buttons are clickable');
+void runNowButton;
+
+// The times field must carry a persistent label, the same defect the display
+// name and the folder field both had.
+assert(populatedShape.text.includes('每天几点'), 'the times field has a visible label');
+const scheduleInputs = populatedShape.attrs.filter(
+  (attrs) => attrs.tag === 'input' && attrs.type === 'text' && typeof attrs.placeholder === 'string'
+    && attrs.placeholder.includes('24 小时制'),
+);
+assert(scheduleInputs.length === 1, 'the daily times field is rendered with a hint');
+assert(scheduleInputs[0].value === '09:00', 'it starts from the default time');
+assert(typeof scheduleInputs[0].onChange === 'function', 'the times field is editable');
+
+// Seeded Host report: the next run and the history must come from it, not be
+// invented client-side.
+hookState[slot('scheduleInfo')] = {
+  ok: true,
+  schedule: {
+    enabled: true,
+    mode: 'daily',
+    times: ['09:00', '21:00'],
+    intervalHours: 6,
+    days: 0,
+    kinds: [],
+    incremental: true,
+    lastRunAt: '2026-11-05T01:00:00.000Z',
+    nextRunAt: '2026-11-06T01:00:00.000Z',
+  },
+  timing: '每天 09:00、21:00 各导出一次',
+  nextRunAt: '2026-11-06T01:00:00.000Z',
+  keyPresent: true,
+  runs: [
+    { at: '2026-11-05T01:00:00.000Z', ok: true, message: '已导出 3 个会话到 D:/导出/2026-11-05' },
+    { at: '2026-11-04T13:00:00.000Z', ok: false, message: '没有数据库密钥，定时导出没有执行。' },
+  ],
+};
+hookState[slot('scheduleDraft')] = {
+  enabled: true,
+  mode: 'daily',
+  times: '09:00, 21:00',
+  intervalHours: '6',
+  days: '0',
+  kinds: [],
+  incremental: true,
+};
+const armedView = render();
+assert(textOf(armedView).includes('下次运行'), 'an armed schedule shows when it runs next');
+assert(textOf(armedView).includes('上次运行'), 'and when it last ran');
+assert(textOf(armedView).includes('2026-11-06'), 'the next run date comes from the Host report');
+assert(textOf(armedView).includes('运行记录'), 'the history is labelled');
+assert(textOf(armedView).includes('已导出 3 个会话'), 'a successful run is listed with its message');
+assert(textOf(armedView).includes('没有数据库密钥'), 'a failed run is listed too, so failures are not silent');
+assert(!textOf(armedView).includes('还没有运行记录'), 'the empty-history hint disappears once there is history');
+
+// Interval mode swaps the times field for an hours field, and the switch has to
+// reach setScheduleDraft to work at all. The step-2 kind chips also carry
+// `data-active`, so they are excluded by their `data-kind`.
+const intervalChip = armedView.attrs.find(
+  (attrs) => attrs.tag === 'button' && attrs['data-mode'] === 'interval' && typeof attrs.onClick === 'function',
+);
+assert(intervalChip !== undefined, 'the mode chips are rendered as toggles');
+assert(intervalChip['data-active'] === 'false', 'the interval chip is inactive while daily is selected');
+const dailyChip = armedView.attrs.find((attrs) => attrs.tag === 'button' && attrs['data-mode'] === 'daily');
+assert(dailyChip['data-active'] === 'true', 'the daily chip is the active one');
+intervalChip.onClick();
+assert(hookState[slot('scheduleDraft')].mode === 'interval', 'clicking it switches the draft to interval mode');
+const intervalView = render();
+assert(textOf(intervalView).includes('每隔几小时'), 'interval mode asks for hours instead of times');
+assert(!textOf(intervalView).includes('每天几点'), 'and the times field is gone');
+
+// A schedule with no key must say so rather than showing a green next-run line.
+hookState[slot('scheduleInfo')] = { ...hookState[slot('scheduleInfo')], keyPresent: false };
+hookState[slot('scheduleDraft')] = { ...hookState[slot('scheduleDraft')], mode: 'daily', enabled: true };
+const noKeyView = render();
+assert(textOf(noKeyView).includes('还没有数据库密钥'), 'a schedule without a key warns that runs will be skipped');
+
+hookState[slot('scheduleInfo')] = null;
+hookState[slot('scheduleDraft')] = null;
+
+for (const language of ['zh', 'en']) {
+  const dictionary = localeCalls[0].dictionaries[language];
+  for (const key of ['step4.title', 'step4.body', 'step4.enable', 'step4.mode', 'step4.modeDaily',
+    'step4.modeInterval', 'step4.times', 'step4.timesHint', 'step4.interval', 'step4.scopeDays',
+    'step4.kinds', 'step4.incremental', 'step4.save', 'step4.saved', 'step4.runNow', 'step4.next',
+    'step4.last', 'step4.never', 'step4.history', 'step4.noHistory', 'step4.needKey', 'step4.badTime']) {
+    assert(typeof dictionary[key] === 'string' && dictionary[key].length > 0,
+      `the ${language} dictionary defines ${key}`);
+  }
+}
+
 // No inline style may smuggle a raw color instead of the theme tokens.
 const literalColor = /^#|^rgba?\(|^hsla?\(/;
 const offending = [];

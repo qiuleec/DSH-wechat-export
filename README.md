@@ -20,6 +20,7 @@
 - **导出目录可配置** —— 面板内直接改，或让 agent 用 `set_out_dir` 设一次长期生效；你配的是**主文件夹**，每次导出自动在它下面按日期建子文件夹。
 - **默认全选** —— 打开面板时所有会话已勾选；手动取消的会话记在 Host 里，重开面板、重启 Harness 都还是取消状态，新出现的会话仍默认勾选。
 - **增量导出** —— 只导出「上次导出之后」的新消息，写成独立文件（文件名带「增量」），既有文件原样不动；没有新消息时明确告诉你「没有新消息」，而不是报错。
+- **定时导出** —— 每天固定时间点（可多个）或固定间隔自动跑，错过不久自动补跑一次，面板上能看到下次运行、上次运行与最近 24 次记录。
 - **agent 工具同源** —— 面板与工具调用同一套服务方法（`lib/service.js`），两边结果永远一致。
 
 ## 环境要求
@@ -88,13 +89,14 @@ plugin_manager action=set_bundle    target=@local/wechat-archive enabled=true
 
 ## 使用
 
-左侧栏点「微信聊天记录导出」图标，面板分三步：
+左侧栏点「微信聊天记录导出」图标，面板分四步：
 
 | 步骤 | 做什么 |
 | --- | --- |
 | 1 · 取得密钥 | 确认环境（数据目录、账号、组件、微信是否在跑），然后捕获密钥 |
 | 2 · 选择会话 | 打开即**全部勾选**；按名称/wxid 搜索、按类型筛选（群聊 / 私聊 / 公众号 / 订阅号 / 服务号 / 系统）、全选/清空；双击行可预览最近 60 条 |
 | 3 · 导出 | 先确认/修改主文件夹，勾选「增量导出」可只导出新消息，再导出选中会话或"导出全部会话"；结果里同时给出主文件夹与本次的日期子文件夹，「打开主文件夹」直接打开你配置的那个文件夹 |
+| 4 · 定时导出 | 可选。开启后按每天固定时间或固定间隔自动导出，下方列出下次运行、上次运行与最近的运行记录 |
 
 ### 主文件夹与日期子文件夹
 
@@ -174,10 +176,33 @@ D:\微信导出\                      ← 你配置的主文件夹
 JSON 汇总不是每个会话一份，而是每次导出一个：当天第一次写 `微信聊天记录-<日期>.json`，之后同一天再导出会带时间后缀另存一份（例如 `微信聊天记录-2026-11-04-173512.json`），因此不会用一个单聊的汇总覆盖掉之前几十个会话的汇总。
 面板的导出结果里会直接打印它的完整路径（标为「JSON 汇总」），agent 工具的 `export` 摘要里也有一行 `汇总：<路径>`。
 
+### 定时导出
+
+第 4 步可以把导出交给插件按时间自动跑，不用每天手点。两种触发方式，页面上切换：
+
+| 方式 | 含义 | 举例 |
+| --- | --- | --- |
+| 每天固定时间 | 每天到点各导出一次，可配多个时间点 | `09:00` 和 `21:00`，一天两次 |
+| 固定间隔 | 从上次运行起算，每 N 小时一次（1–168） | 每 6 小时 |
+
+范围与第 3 步一致：天窗口（全部会话，或最近 3/7/30 天活跃）+ 会话类型（群聊、私聊、订阅号、服务号……），
+再加上「增量 / 完整」开关。导出目录沿用主文件夹，文件仍然落到**当天日期子文件夹**里。
+两个模式的配置都存在 `schedule.json`，最近 24 次运行记在 `schedule-runs.json`，面板上直接列出成功与失败。
+
+几条行为上的约定：
+
+- **定时任务跑在 DSH 进程内**，不是 Windows 计划任务。DSH 关着的时候不会触发，也不需要额外权限；
+- **错过一次会补跑一次**：关掉 DSH 或电脑休眠导致错过时点，下次启动时若迟到不超过 2 小时就补跑一次，
+  再重新排期。迟到更久则跳过并在「运行记录」里写明跳过了几分钟 —— 陈旧的补跑只会产出一份让人对不上时间的归档，
+  不如老实说跳过了；
+- **到点时没有密钥就不写文件**，只记一条失败（面板上显示原因），不会静默什么都不做；
+- **改配置会立刻重新排期**，不需要重启；
+- 「立即运行一次」走的是定时器**同一条代码路径**，所以试跑成功就能说明定时那天也会成功。
+
 ### 交给 agent 用
 
 工具 `wechat_archive` 的 `action`：`status` / `list` / `export` / `preview` / `progress` /
-`capture` / `set_out_dir` / `open_folder` / `forget`。例如：
+`schedule` / `run_schedule` / `capture` / `set_out_dir` / `open_folder` / `forget`。例如：
 
 - 「看看本机微信有哪些群聊」→ `action: "list", kinds: ["group"]`
 - 「把最近 7 天活跃的群导出成 CSV 给我」→ `action: "export", kinds: ["group"], days: 7`
@@ -186,6 +211,10 @@ JSON 汇总不是每个会话一份，而是每次导出一个：当天第一次
 - 「以后都导到 D:\微信备份」→ `action: "set_out_dir", outDir: "D:\微信备份"`（`outDir: ""` 恢复默认）
 - 「只导出几个群的新消息」→ `action: "export", kinds: ["group"], incremental: true`
 - 「增量导出到哪了」→ `action: "progress"`；「从头再来」→ `action: "progress", reset: true`
+- 「每天 9 点自动导出群聊新消息」→ `action: "schedule", enabled: true, mode: "daily", times: ["09:00"], kinds: ["group"], incremental: true`
+- 「改成每 4 小时一次」→ `action: "schedule", mode: "interval", intervalHours: 4`
+- 「现在就按定时配置跑一次」→ `action: "run_schedule"`
+- 「定时导出关了吧」→ `action: "schedule", enabled: false`
 
 `kinds` 可选 `group`（群聊）/ `direct`（私聊，含企业微信单聊）/ `official`（公众号，即订阅号
 + 服务号）/ `subscription`（订阅号）/ `service`（服务号）/ `system`（微信自己的占位会话，
@@ -269,7 +298,7 @@ agent 在 `status` 里能看到它（`data.deselected`），因此「面板上�
 ## 项目结构
 
 ```
-index.js            Host 半边：9 条 /api/wechat-chat/* 路由 + agent 工具 wechat_archive
+index.js            Host 半边：13 条 /api/wechat-chat/* 路由 + agent 工具 wechat_archive
 client.js           客户端半边：左侧栏入口（sidebar.panellist）+ 主面板（main，keyed）
 cordis.patch.yml    bundle 组合：insert { id: wechat-archive }
 lib/sqlcipher.js    SQLCipher 4：KDF、page-1 HMAC、逐页 AES-256-CBC 解密到临时库
@@ -277,12 +306,14 @@ lib/wechat.js       账号发现、会话列举、类型判定、消息解码与
 lib/capture.js      koffi + bin/wx_key.dll：只对已加载 Weixin.dll 的进程挂载、轮询密钥
 lib/export.js       HTML / CSV / TXT / JSON 汇总的写出
 lib/service.js      面板与工具共用的服务方法（所有操作返回 {ok, error, code}）
-lib/paths.js        插件状态文件的唯一来源（设置、密钥、勾选、进度、默认导出目录）
+lib/paths.js        插件状态文件的唯一来源（设置、密钥、勾选、进度、定时配置、默认导出目录）
 lib/store.js        默认勾选（存取消集合）与增量导出水位（只前进不后退）
+lib/schedule.js     定时配置校验、下一次触发时刻的纯计算、运行历史
+lib/scheduler.js    单次 setTimeout 自重排的定时器（含补跑与跳过规则）
 locale/{zh,en}.json 插件名称与描述（Harness 的插件市场读取这里）
 icon.svg            左侧栏与插件行的图标
 bin/wx_key.dll      密钥捕获组件（第三方，CC BY 4.0，见文末署名）
-test/               10 个测试文件 + fixture.mjs，共 590 条断言，不依赖真实微信数据
+test/               11 个测试文件 + fixture.mjs，共 821 条断言，不依赖真实微信数据
 ```
 
 ## 常见问题
@@ -312,8 +343,9 @@ node test/pipeline.test.mjs    # 合成账号目录端到端（发现→解锁�
 node test/service.test.mjs     # 设置读写、筛选、预览、导出编排、目录守卫
 node test/kinds.test.mjs       # 会话类型判定：biz_info.type、@chatroom、@openim、公众号伞形筛选
 node test/routes.test.mjs      # 同源校验、方法/坏 JSON/超长 body
-node test/tool.test.mjs        # agent 工具的 9 个 action
+node test/tool.test.mjs        # agent 工具的 11 个 action
 node test/state.test.mjs       # 默认勾选、增量水位、损坏状态的降级
+node test/schedule.test.mjs    # 定时配置校验、下一次触发时刻、补跑与跳过、运行历史
 node test/render.test.mjs      # 客户端：slot 注册、图标、面板渲染、样式生效与清理
 node test/realdb.test.mjs      # 有真实密钥时校验真实库；没有则自动跳过
 ```
@@ -324,7 +356,7 @@ node test/realdb.test.mjs      # 有真实密钥时校验真实库；没有则�
 for f in test/*.test.mjs; do printf '%-28s ' "$f"; node "$f" >/dev/null 2>&1 && echo ok || echo FAIL; done
 ```
 
-共 590 条断言。测试不依赖真实微信数据：`test/fixture.mjs` 会临时造一个 80 字节 reserve 的明文库，再按 SQLCipher 4
+共 821 条断言。测试不依赖真实微信数据：`test/fixture.mjs` 会临时造一个 80 字节 reserve 的明文库，再按 SQLCipher 4
 布局加密成账号目录，因此无需你的密钥也能验证全链路。
 
 客户端那半没有可 import 的 React（运行时由模块表提供），`test/render.test.mjs` 因此用一个同等调用形状的
