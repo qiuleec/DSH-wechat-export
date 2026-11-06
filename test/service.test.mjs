@@ -198,6 +198,29 @@ try {
   const missing = await service.revealDirectory(join(process.env.DSH_HOME, 'wechat-chat-plugin', 'nope'));
   assert(missing.ok === false && missing.code === 'NOT_FOUND', 'revealing a missing directory reports NOT_FOUND');
 
+  /* --------------------------- selected conversations --------------------------- */
+
+  // The schedule exports "whatever step 2 has ticked", so this resolver is the
+  // single definition of that and needs its own coverage.
+  const allSelected = await service.selectedConversations();
+  assert(allSelected.ok === true, 'the selection resolves while a key exists');
+  assert(allSelected.wxids.length === allSelected.total, 'everything is selected by default');
+  assert(allSelected.deselected === 0, 'and nothing is recorded as unticked');
+
+  await service.setSelection([allSelected.wxids[0]]);
+  const narrowed = await service.selectedConversations();
+  assert(narrowed.ok === true, 'the selection still resolves with one unticked');
+  assert(narrowed.wxids.length === allSelected.total - 1, 'the unticked conversation drops out');
+  assert(!narrowed.wxids.includes(allSelected.wxids[0]), 'and it is the one that was unticked');
+  assert(narrowed.deselected === 1, 'the report counts it');
+
+  await service.setSelection(allSelected.wxids);
+  const emptied = await service.selectedConversations();
+  assert(emptied.ok === false && emptied.code === 'NO_SELECTION',
+    'unticking everything is a reported failure, not an empty export');
+  assert(emptied.error.includes('第 2 步'), 'and the message says where to fix it');
+  await service.setSelection([]);
+
   /* -------------------------------- forget -------------------------------- */
   await service.forgetKey({ deleteFile: true });
   const afterForget = await service.readSettings();

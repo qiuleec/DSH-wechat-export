@@ -594,8 +594,8 @@ assert(scheduleInputs.length === 1, 'the daily times field is rendered with a hi
 assert(scheduleInputs[0].value === '09:00', 'it starts from the default time');
 assert(typeof scheduleInputs[0].onChange === 'function', 'the times field is editable');
 
-// Seeded Host report: the next run and the history must come from it, not be
-// invented client-side.
+// Seeded Host report: the next run, the scope and the history must come from
+// it, not be invented client-side.
 hookState[slot('scheduleInfo')] = {
   ok: true,
   schedule: {
@@ -603,8 +603,6 @@ hookState[slot('scheduleInfo')] = {
     mode: 'daily',
     times: ['09:00', '21:00'],
     intervalHours: 6,
-    days: 0,
-    kinds: [],
     incremental: true,
     lastRunAt: '2026-11-05T01:00:00.000Z',
     nextRunAt: '2026-11-06T01:00:00.000Z',
@@ -612,6 +610,7 @@ hookState[slot('scheduleInfo')] = {
   timing: '每天 09:00、21:00 各导出一次',
   nextRunAt: '2026-11-06T01:00:00.000Z',
   keyPresent: true,
+  scope: { ok: true, selected: 42, total: 177, deselected: 135 },
   runs: [
     { at: '2026-11-05T01:00:00.000Z', ok: true, message: '已导出 3 个会话到 D:/导出/2026-11-05' },
     { at: '2026-11-04T13:00:00.000Z', ok: false, message: '没有数据库密钥，定时导出没有执行。' },
@@ -622,8 +621,6 @@ hookState[slot('scheduleDraft')] = {
   mode: 'daily',
   times: '09:00, 21:00',
   intervalHours: '6',
-  days: '0',
-  kinds: [],
   incremental: true,
 };
 const armedView = render();
@@ -634,6 +631,39 @@ assert(textOf(armedView).includes('运行记录'), 'the history is labelled');
 assert(textOf(armedView).includes('已导出 3 个会话'), 'a successful run is listed with its message');
 assert(textOf(armedView).includes('没有数据库密钥'), 'a failed run is listed too, so failures are not silent');
 assert(!textOf(armedView).includes('还没有运行记录'), 'the empty-history hint disappears once there is history');
+
+// The scope is step 2's selection, so the card must say so and show its size
+// rather than offering a second, divergent selector.
+assert(textOf(armedView).includes('跟随第 2 步的勾选'), 'the card says the scope comes from step 2');
+assert(textOf(armedView).includes('勾中 42 个'), 'and reports how many conversations that is');
+assert(textOf(armedView).includes('共 177 个'), 'and how many exist in total');
+// The old "recency + kind" scope controls are gone entirely — not merely
+// hidden — because two scope selectors could disagree with each other.
+assert(!textOf(armedView).includes('最近 7 天活跃的会话'), 'the schedule card repeats no recency scope control');
+for (const language of ['zh', 'en']) {
+  const dictionary = localeCalls[0].dictionaries[language];
+  for (const key of ['step4.scopeDays', 'step4.scopeAll', 'step4.scopeRecent', 'step4.kinds']) {
+    assert(dictionary[key] === undefined, `the ${language} dictionary drops the obsolete ${key}`);
+  }
+}
+
+// No selection at all must be stated, because a timed run would be a no-op.
+hookState[slot('scheduleInfo')] = {
+  ...hookState[slot('scheduleInfo')],
+  scope: { ok: false, code: 'NO_SELECTION', error: '第 2 步里所有会话都被取消了。定时导出至少需要一个勾选的会话。' },
+};
+const emptyScopeView = render();
+assert(textOf(emptyScopeView).includes('所有会话都被取消了'), 'an empty selection is explained instead of shown as 0');
+hookState[slot('scheduleInfo')] = {
+  ...hookState[slot('scheduleInfo')],
+  scope: null,
+};
+const unknownScopeView = render();
+assert(textOf(unknownScopeView).includes('无法确定范围'), 'a report without a scope says it cannot tell');
+hookState[slot('scheduleInfo')] = {
+  ...hookState[slot('scheduleInfo')],
+  scope: { ok: true, selected: 42, total: 177, deselected: 135 },
+};
 
 // Interval mode swaps the times field for an hours field, and the switch has to
 // reach setScheduleDraft to work at all. The step-2 kind chips also carry
@@ -663,8 +693,9 @@ hookState[slot('scheduleDraft')] = null;
 for (const language of ['zh', 'en']) {
   const dictionary = localeCalls[0].dictionaries[language];
   for (const key of ['step4.title', 'step4.body', 'step4.enable', 'step4.mode', 'step4.modeDaily',
-    'step4.modeInterval', 'step4.times', 'step4.timesHint', 'step4.interval', 'step4.scopeDays',
-    'step4.kinds', 'step4.incremental', 'step4.save', 'step4.saved', 'step4.runNow', 'step4.next',
+    'step4.modeInterval', 'step4.times', 'step4.timesHint', 'step4.interval', 'step4.scope',
+    'step4.scopeFollow', 'step4.scopeCount', 'step4.scopeEmpty', 'step4.scopeUnknown',
+    'step4.incremental', 'step4.save', 'step4.saved', 'step4.runNow', 'step4.next',
     'step4.last', 'step4.never', 'step4.history', 'step4.noHistory', 'step4.needKey', 'step4.badTime']) {
     assert(typeof dictionary[key] === 'string' && dictionary[key].length > 0,
       `the ${language} dictionary defines ${key}`);

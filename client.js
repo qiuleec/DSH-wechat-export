@@ -101,9 +101,14 @@ window.__ModuleLoader__.load({
       'step3.incrementalFirstRun': '还没有导出进度：第一次增量导出会覆盖全部历史',
       'step3.incrementalReset': '清除导出进度',
       'step4.title': '第 4 步 · 定时导出（可选）',
-      'step4.body': '让插件在后台按时间自动导出，无需每次手动点。导出目录与第 3 步的主文件夹相同，按日期建子文件夹；DSH 不在运行时不会触发，重新打开后若错过不久会补跑一次。',
+      'step4.body': '把第 3 步的导出交给插件按时间自动跑。导出的会话就是第 2 步里勾中的那些——在这里改不用改定时任务，定时任务永远跟着勾选走。导出目录与第 3 步的主文件夹相同，按日期建子文件夹。DSH 不在运行时不会触发，重新打开后若错过不久会补跑一次。',
       'step4.enable': '开启定时导出',
       'step4.disabled': '定时导出未开启',
+      'step4.scope': '导出范围',
+      'step4.scopeFollow': '跟随第 2 步的勾选',
+      'step4.scopeCount': '勾中 {n} 个，共 {m} 个会话',
+      'step4.scopeEmpty': '第 2 步里没有勾中的会话，定时导出会跳过。',
+      'step4.scopeUnknown': '还没有数据库密钥，无法确定范围。',
       'step4.mode': '触发方式',
       'step4.modeDaily': '每天固定时间',
       'step4.modeInterval': '固定间隔',
@@ -111,10 +116,6 @@ window.__ModuleLoader__.load({
       'step4.timesHint': '24 小时制，可用逗号分隔多个时间点，例如 09:00, 21:00',
       'step4.interval': '每隔几小时',
       'step4.intervalHint': '1 到 168 小时',
-      'step4.scopeDays': '导出范围',
-      'step4.scopeAll': '全部会话',
-      'step4.scopeRecent': '最近 {n} 天活跃的会话',
-      'step4.kinds': '会话类型',
       'step4.incremental': '增量导出',
       'step4.incrementalHint': '只写上次导出之后的新消息；关闭则每次完整重写',
       'step4.save': '保存定时设置',
@@ -240,9 +241,14 @@ window.__ModuleLoader__.load({
       'step3.incrementalResetDone': 'Export marks cleared.',
 
       'step4.title': 'Step 4 · Scheduled export (optional)',
-      'step4.body': 'Let the plugin export on a timer in the background instead of clicking every time. Files go to the same master folder as step 3, in a dated subfolder. Nothing runs while DSH is closed; on the next start a run missed by a short while is caught up once.',
+      'step4.body': 'Export on a timer instead of clicking every time. The conversations are exactly the ones ticked in step 2 — change them there, not here; the schedule always follows that selection. Files go to the same master folder as step 3, in a dated subfolder. Nothing runs while DSH is closed; on the next start a run missed by a short while is caught up once.',
       'step4.enable': 'Enable scheduled export',
       'step4.disabled': 'Scheduled export is off',
+      'step4.scope': 'Scope',
+      'step4.scopeFollow': 'Follows the step-2 selection',
+      'step4.scopeCount': '{n} of {m} conversations ticked',
+      'step4.scopeEmpty': 'Nothing is ticked in step 2, so timed runs would be skipped.',
+      'step4.scopeUnknown': 'No database key yet, so the scope is unknown.',
       'step4.mode': 'Trigger',
       'step4.modeDaily': 'Fixed times each day',
       'step4.modeInterval': 'Fixed interval',
@@ -250,10 +256,6 @@ window.__ModuleLoader__.load({
       'step4.timesHint': '24-hour clock, comma-separated for several, for example 09:00, 21:00',
       'step4.interval': 'Every how many hours',
       'step4.intervalHint': '1 to 168 hours',
-      'step4.scopeDays': 'Scope',
-      'step4.scopeAll': 'All conversations',
-      'step4.scopeRecent': 'Conversations active in the last {n} days',
-      'step4.kinds': 'Conversation kinds',
       'step4.incremental': 'Incremental export',
       'step4.incrementalHint': 'Write only messages newer than the last export; off rewrites everything',
       'step4.save': 'Save schedule',
@@ -599,8 +601,6 @@ window.__ModuleLoader__.load({
               mode: value.schedule.mode,
               times: (value.schedule.times || []).join(', '),
               intervalHours: String(value.schedule.intervalHours),
-              days: String(value.schedule.days ?? 0),
-              kinds: [...(value.schedule.kinds || [])],
               incremental: value.schedule.incremental
             });
           }
@@ -801,8 +801,6 @@ window.__ModuleLoader__.load({
               mode: scheduleDraft.mode,
               times,
               intervalHours: Number(scheduleDraft.intervalHours),
-              days: Number(scheduleDraft.days),
-              kinds: [...scheduleDraft.kinds],
               incremental: scheduleDraft.incremental === true
             })
           });
@@ -1262,16 +1260,9 @@ window.__ModuleLoader__.load({
           mode: saved ? saved.mode : 'daily',
           times: saved ? saved.times.join(', ') : '09:00',
           intervalHours: saved ? String(saved.intervalHours) : '6',
-          days: saved ? String(saved.days) : '0',
-          kinds: saved ? [...saved.kinds] : [],
           incremental: saved ? saved.incremental : true
         };
         const patchDraft = (patch) => setScheduleDraft({ ...draft, ...patch });
-        const toggleKind = (kind) => patchDraft({
-          kinds: draft.kinds.includes(kind)
-            ? draft.kinds.filter((value) => value !== kind)
-            : [...draft.kinds, kind]
-        });
         const nextLabel = scheduleInfo && scheduleInfo.nextRunAt
           ? formatTime(Date.parse(scheduleInfo.nextRunAt) / 1000)
           : t('step4.notScheduled');
@@ -1279,6 +1270,16 @@ window.__ModuleLoader__.load({
           ? formatTime(Date.parse(saved.lastRunAt) / 1000)
           : t('step4.never');
         const runs = (scheduleInfo && scheduleInfo.runs) || [];
+        // The scope is step 2's selection, so state its size here: the user
+        // should not have to scroll up and cross-reference another card to know
+        // what a timed run would cover.
+        const scope = scheduleInfo && scheduleInfo.scope ? scheduleInfo.scope : null;
+        const scopeText = scope === null
+          ? t('step4.scopeUnknown')
+          : scope.ok
+            ? `${t('step4.scopeFollow')}（${t('step4.scopeCount')
+                .replace('{n}', String(scope.selected)).replace('{m}', String(scope.total))}）`
+            : (scope.error || t('step4.scopeEmpty'));
         return h('div', { className: 'wa-card' },
           h('div', { className: 'wa-cardHead' },
             h('h2', { className: 'wa-cardTitle' }, t('step4.title')),
@@ -1310,6 +1311,13 @@ window.__ModuleLoader__.load({
             draft.enabled
               ? (scheduleInfo && scheduleInfo.timing ? scheduleInfo.timing : t('step4.enable'))
               : t('step4.disabled')),
+          // Scope: read-only, because it is step 2's state. The one way to change
+          // it is the list above, so say that instead of offering a second
+          // selector that could drift out of sync.
+          h('div', { className: 'wa-toolbar' },
+            h('span', { className: 'wa-kvLabel' }, t('step4.scope')),
+            h('span', { className: 'wa-cardBody', style: { margin: 0 } }, scopeText)
+          ),
           saved === null
             ? null
             : h('p', { className: 'wa-hint' },
@@ -1351,28 +1359,6 @@ window.__ModuleLoader__.load({
                   onChange: (event) => patchDraft({ intervalHours: event.target.value })
                 })
               ),
-          h('div', { className: 'wa-toolbar' },
-            h('span', { className: 'wa-kvLabel' }, t('step4.scopeDays')),
-            h('select', {
-              className: 'wa-input', value: draft.days, style: { width: 120 },
-              onChange: (event) => patchDraft({ days: event.target.value })
-            },
-              h('option', { value: '0' }, t('step4.scopeAll')),
-              h('option', { value: '3' }, t('step4.scopeRecent').replace('{n}', '3')),
-              h('option', { value: '7' }, t('step4.scopeRecent').replace('{n}', '7')),
-              h('option', { value: '30' }, t('step4.scopeRecent').replace('{n}', '30'))
-            )
-          ),
-          // Scope types reuse step 2's chips so "what will run" is expressed
-          // with the same words the user filtered the list with.
-          h('div', { className: 'wa-kinds' },
-            h('span', { className: 'wa-kindsLabel' }, t('step4.kinds')),
-            KIND_ORDER.map((kind) => h('button', {
-              key: kind, type: 'button', className: 'wa-chip',
-              'data-active': draft.kinds.includes(kind) ? 'true' : 'false',
-              onClick: () => toggleKind(kind)
-            }, t(`step2.kind.${kind}`)))
-          ),
           h('label', { className: 'wa-field', title: t('step4.incrementalHint') },
             h('input', {
               className: 'wa-check wa-checkInline', type: 'checkbox', checked: draft.incremental,

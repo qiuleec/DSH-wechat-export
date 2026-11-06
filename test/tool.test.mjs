@@ -21,6 +21,7 @@ await mkdir(process.env.USERPROFILE, { recursive: true });
 
 try {
   const { buildAccount } = await import('./fixture.mjs');
+  const { writeDeselected } = await import('../lib/store.js');
   const accountRoot = join(scratch, 'wechat-fixture');
   await mkdir(accountRoot, { recursive: true });
   const account = await buildAccount({
@@ -252,24 +253,41 @@ try {
   const scheduleRead = await run({ action: 'schedule' });
   assert(scheduleRead.ok === true, 'the schedule action reports without changing anything');
   assert(scheduleRead.summary.includes('已关闭'), 'a fresh schedule reads as off');
-  assert(scheduleRead.summary.includes('全部会话'), 'the default scope is every conversation');
+  // Scope is the step-2 selection, so the summary must point there instead of
+  // describing a scope the schedule keeps for itself.
+  assert(scheduleRead.summary.includes('第 2 步'), 'the summary points at the step-2 selection');
+  assert(scheduleRead.scope === undefined, 'scope rides inside data, not beside it');
+  assert(scheduleRead.data.scope.ok === true, 'the report can determine the scope while a key exists');
+  assert(scheduleRead.data.scope.selected === scheduleRead.data.scope.total,
+    'a fresh install has every conversation selected');
   assert(scheduleRead.data.schedule.enabled === false, 'the payload carries the config');
+  assert(scheduleRead.data.schedule.days === undefined, 'the schedule stores no day window');
 
   const scheduleSaved = await run({
     action: 'schedule',
     enabled: true,
     mode: 'daily',
     times: ['08:00', '20:00'],
-    kinds: ['group'],
-    days: 7,
     incremental: true,
   });
   assert(scheduleSaved.ok === true, 'the agent can arm the schedule');
   assert(scheduleSaved.data.schedule.enabled === true, 'the payload reflects it');
   assert(scheduleSaved.data.schedule.times.join(',') === '08:00,20:00', 'the times are stored');
   assert(scheduleSaved.summary.includes('已开启'), 'the summary says it is armed');
-  assert(scheduleSaved.summary.includes('群聊'), 'the summary names the scope');
+  assert(scheduleSaved.summary.includes('勾中'), 'the summary reports how many conversations will be exported');
   assert(scheduleSaved.summary.includes('下次运行'), 'the summary states when it will next run');
+
+  // Ticking a conversation off in step 2 must change what the schedule exports,
+  // without touching the schedule itself.
+  const beforeDeselect = (await run({ action: 'schedule' })).data.scope.selected;
+  await writeDeselected(['wxid_laowang']);
+  const narrowed = await run({ action: 'schedule' });
+  assert(narrowed.data.scope.selected === beforeDeselect - 1,
+    'unticking a conversation shrinks the scheduled scope immediately');
+  assert(narrowed.data.scope.deselected === 1, 'and the report counts the unticked ones');
+  await writeDeselected([]);
+  assert((await run({ action: 'schedule' })).data.scope.selected === beforeDeselect,
+    're-ticking it restores the scope');
 
   const scheduleInterval = await run({ action: 'schedule', mode: 'interval', intervalHours: 4 });
   assert(scheduleInterval.data.schedule.mode === 'interval', 'the mode can be switched to interval');
@@ -279,9 +297,7 @@ try {
   assert(scheduleRejected.ok === false && scheduleRejected.code === 'BAD_INPUT', 'an invalid time is refused');
   assert(scheduleRejected.summary.includes('无法保存'), 'and says so plainly');
 
-  // The fixture's messages are dated 2023, so a 7-day window is legitimately
-  // empty; widen the scope to exercise the run itself.
-  await run({ action: 'schedule', days: 0, kinds: [], mode: 'daily', times: ['08:00'] });
+  await run({ action: 'schedule', mode: 'daily', times: ['08:00'] });
   const runScheduled = await run({ action: 'run_schedule' });
   assert(runScheduled.ok === true, 'a scheduled run with a key and conversations succeeds');
   assert(runScheduled.data.exported.length > 0, 'it actually exported something');
@@ -291,6 +307,17 @@ try {
   assert(scheduleWithHistory.data.runs.length >= 1, 'the run appears in the history');
   assert(scheduleWithHistory.summary.includes('最近几次'), 'the summary shows the history');
   assert(scheduleWithHistory.data.schedule.lastRunAt !== '', 'the last-run stamp is set');
+
+  // A run with nothing selected must fail loudly: a silently-empty timed export
+  // would be indistinguishable from a broken one.
+  const allWxids = (await run({ action: 'list' })).data.sessions.map((session) => session.wxid);
+  await writeDeselected(allWxids);
+  const nothingSelected = await run({ action: 'schedule' });
+  assert(nothingSelected.data.scope.ok === false && nothingSelected.data.scope.code === 'NO_SELECTION',
+    'unticking everything is reported as no selection');
+  const blockedRun = await run({ action: 'run_schedule' });
+  assert(blockedRun.ok === false && blockedRun.code === 'NO_SELECTION', 'and the scheduled run refuses to start');
+  await writeDeselected([]);
 
   const scheduleOff = await run({ action: 'schedule', enabled: false });
   assert(scheduleOff.data.schedule.enabled === false, 'the agent can disarm the schedule');

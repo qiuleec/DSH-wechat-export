@@ -382,7 +382,7 @@ Actions:
 - "set_out_dir": point exports at a chosen directory (created if missing), or reset to the plugin default
   with an empty outDir.
 - "progress": the per-conversation incremental watermarks (what the next incremental export would pick up). \`reset: true\` clears them so the next incremental run covers full history.
-- "schedule": report the scheduled export (times, scope, next run, recent runs). Pass \`enabled\` / \`mode\` / \`times\` / \`intervalHours\` / \`days\` / \`kinds\` / \`incremental\` to change it; \`mode\` is "daily" (fixed clock times, several allowed) or "interval" (every N hours), and an empty patch just reports.
+- "schedule": report the scheduled export (times, whether it is armed, the selection it will cover, next run, recent runs). Pass \`enabled\` / \`mode\` / \`times\` / \`intervalHours\` / \`incremental\` to change it; \`mode\` is "daily" (fixed clock times, several allowed) or "interval" (every N hours), and an empty patch just reports. The conversations it exports are whatever is ticked in the panel's step 2 (see action "selection") — the schedule stores no scope of its own.
 - "run_schedule": run the scheduled export once, right now, through the exact code path the timer uses.
 - "open_folder": reveal the export directory in File Explorer.
 - "forget": delete the stored key.`;
@@ -644,7 +644,7 @@ function buildTool(ctx) {
           };
         }
         case 'schedule': {
-          const patchKeys = ['enabled', 'mode', 'times', 'intervalHours', 'days', 'kinds', 'incremental'];
+          const patchKeys = ['enabled', 'mode', 'times', 'intervalHours', 'incremental'];
           const patch = {};
           for (const key of patchKeys) {
             if (args[key] !== undefined) patch[key] = args[key];
@@ -661,14 +661,13 @@ function buildTool(ctx) {
           const next = report.nextRunAt
             ? new Date(report.nextRunAt).toISOString().replace('T', ' ').slice(0, 16)
             : '未排期';
-          const scope = schedule.kinds.length > 0
-            ? schedule.kinds.map((kind) => KIND_LABELS[kind] ?? kind).join('、')
-            : '全部类型';
-          const within = Number(schedule.days) > 0 ? `最近 ${schedule.days} 天活跃的会话` : '全部会话';
+          const scope = report.scope && report.scope.ok
+            ? `第 2 步里勾中的 ${report.scope.selected} 个会话（共 ${report.scope.total} 个，取消了 ${report.scope.deselected} 个）`
+            : `无法确定范围：${(report.scope && (report.scope.error ?? report.scope.code)) ?? '未知原因'}`;
           const lines = [
             `定时导出：${schedule.enabled ? '已开启' : '已关闭'}`,
             `时间：${report.timing}`,
-            `范围：${within}（${scope}）`,
+            `范围：${scope}`,
             `模式：${schedule.incremental ? '增量（只写新消息）' : '完整导出'}`,
             `下次运行：${next}`,
             `上次运行：${schedule.lastRunAt ? schedule.lastRunAt.replace('T', ' ').slice(0, 19) : '还没有运行过'}`,

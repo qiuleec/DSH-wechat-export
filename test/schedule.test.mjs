@@ -63,18 +63,23 @@ try {
   assert(mergeSchedule(base, { intervalHours: MIN_INTERVAL_HOURS }).ok === true, 'the minimum interval is accepted');
   assert(mergeSchedule(base, { intervalHours: 0.5 }).ok === false, 'an interval below the minimum is rejected');
   assert(mergeSchedule(base, { intervalHours: 200 }).ok === false, 'an interval above the maximum is rejected');
-  assert(mergeSchedule(base, { days: 0 }).ok === true, 'zero days means everything and is accepted');
-  assert(mergeSchedule(base, { days: -1 }).ok === false, 'a negative day count is rejected');
-  assert(mergeSchedule(base, { kinds: ['group'] }).ok === true, 'a known kind is accepted');
-  assert(mergeSchedule(base, { kinds: ['chatroom'] }).ok === false, 'an unknown kind is rejected rather than ignored');
-  assert(mergeSchedule(base, { kinds: ['group', 'group'] }).schedule.kinds.length === 1, 'duplicate kinds collapse');
+  // Scope is the step-2 selection now, so `days`/`kinds` are not part of the
+  // schedule at all: an old client sending them must not resurrect a second
+  // scope that could disagree with the panel's selection.
+  const withLegacyScope = mergeSchedule(base, { days: 7, kinds: ['group'] });
+  assert(withLegacyScope.ok === true, 'a legacy scope patch is accepted rather than erroring');
+  assert(withLegacyScope.schedule.days === undefined, 'the obsolete day window is not stored');
+  assert(withLegacyScope.schedule.kinds === undefined, 'the obsolete kind list is not stored');
+  const legacyStored = { ...DEFAULT_SCHEDULE, days: 30, kinds: ['group'] };
+  const upgraded = mergeSchedule(legacyStored, { enabled: true }).schedule;
+  assert(upgraded.days === undefined && upgraded.kinds === undefined,
+    'an upgraded config silently drops the scope it can no longer honour');
   assert(mergeSchedule(base, { incremental: 'no' }).ok === false, 'a non-boolean incremental is rejected');
   assert(mergeSchedule(base, null).ok === false, 'a non-object patch is rejected');
   // A patch is applied over the current config, not over defaults.
-  const current = { ...DEFAULT_SCHEDULE, times: ['07:30'], kinds: ['group'] };
+  const current = { ...DEFAULT_SCHEDULE, times: ['07:30'] };
   const merged = mergeSchedule(current, { enabled: true }).schedule;
   assert(merged.times[0] === '07:30', 'an untouched field keeps its current value');
-  assert(merged.kinds.length === 1 && merged.kinds[0] === 'group', 'an untouched kind list survives');
 
   /* --------------------------- clock --------------------------- */
 
@@ -188,13 +193,18 @@ try {
   assert(saved.nextRunAt === '', 'a disabled schedule reports no next run');
   assert(saved.message.includes('已关闭'), 'and says so');
 
-  const armed = await service.setSchedule({ enabled: true, mode: 'daily', times: ['06:30', '18:30'], days: 7, kinds: ['group', 'direct'] });
-  assert(armed.ok === true, 'arming with a full scope saves');
+  const armed = await service.setSchedule({ enabled: true, mode: 'daily', times: ['06:30', '18:30'], incremental: false });
+  assert(armed.ok === true, 'arming with times and a mode saves');
   assert(armed.nextRunAt !== '', 'arming computes a next run');
   const armedReport = await service.describeSchedule();
   assert(armedReport.schedule.times.join(',') === '06:30,18:30', 'the times survive the round trip');
-  assert(armedReport.schedule.days === 7, 'the day scope survives the round trip');
-  assert(armedReport.schedule.kinds.join(',') === 'group,direct', 'the kind scope survives the round trip');
+  assert(armedReport.schedule.incremental === false, 'the incremental switch survives the round trip');
+  assert(armedReport.schedule.days === undefined, 'the schedule stores no scope of its own');
+  assert(armedReport.schedule.kinds === undefined, 'and no kind list either');
+  // The reported scope is step 2's selection, and this fixture has no key yet,
+  // so the report must say it cannot determine one rather than guessing.
+  assert(armedReport.scope.ok === false && armedReport.scope.code === 'NO_KEY',
+    'without a key the scope is reported as unknown, not as zero');
 
   const rejected = await service.setSchedule({ times: ['99:99'] });
   assert(rejected.ok === false && rejected.code === 'BAD_INPUT', 'an invalid time is refused by the service too');
