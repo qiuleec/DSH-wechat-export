@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
       'title': '微信聊天记录导出',
       'subtitle': '把本机微信 4.x 的聊天记录解密导出为网页时间线、CSV 表格与纯文本。数据全程留在本机。',
       'refresh': '刷新',
-      'openFolder': '打开导出目录',
+      'openFolder': '打开主文件夹',
 
       'status.title': '环境检查',
       'status.dataRoot': '微信数据根目录',
@@ -28,7 +28,7 @@ window.__ModuleLoader__.load({
       'status.key': '数据库密钥',
       'status.component': '密钥捕获组件',
       'status.wechat': '微信进程',
-      'status.outDir': '导出目录',
+      'status.outDir': '主文件夹',
       'status.none': '未找到',
       'status.keyPresent': '已保存',
       'status.keyValid': '已保存，可解锁账号',
@@ -70,8 +70,11 @@ window.__ModuleLoader__.load({
 
       'step3.title': '第 3 步 · 导出',
       'step3.body': '会为每个会话生成三个文件：HTML（像微信一样的网页时间线）、CSV（表格软件可打开）、TXT（纯文本）。另外生成一个 JSON 汇总，便于交给 AI 分析。',
-      'step3.outDir': '导出目录',
-      'step3.outDirHint': '导出文件写到哪个文件夹；留空恢复默认',
+      'step3.outDir': '主文件夹',
+      'step3.outDirHint': '你配置的主文件夹；导出文件写在它下面按日期建的子文件夹里。留空恢复默认',
+      'step3.outDirLayout': '导出时会在主文件夹下按导出日期建子文件夹（例如 2026-11-06），文件写在当天那个子文件夹里；「打开主文件夹」打开的就是这里。',
+      'step3.outDirDay': '本次文件所在：',
+      'step3.outDirMaster': '主文件夹：',
       'step3.outDirPick': '选择…',
       'step3.outDirSave': '保存目录',
       'step3.outDirSaving': '正在保存…',
@@ -120,7 +123,7 @@ window.__ModuleLoader__.load({
       'title': 'WeChat Chat Export',
       'subtitle': "Decrypt and export this machine's WeChat 4.x chat history to an HTML timeline, CSV table and plain text. Everything stays on this machine.",
       'refresh': 'Refresh',
-      'openFolder': 'Open export folder',
+      'openFolder': 'Open master folder',
 
       'status.title': 'Environment',
       'status.dataRoot': 'WeChat data root',
@@ -128,7 +131,7 @@ window.__ModuleLoader__.load({
       'status.key': 'Database key',
       'status.component': 'Key capture component',
       'status.wechat': 'WeChat process',
-      'status.outDir': 'Export folder',
+      'status.outDir': 'Master folder',
       'status.none': 'Not found',
       'status.keyPresent': 'Saved',
       'status.keyValid': 'Saved and unlocks the account',
@@ -170,8 +173,11 @@ window.__ModuleLoader__.load({
 
       'step3.title': 'Step 3 · Export',
       'step3.body': 'Each conversation becomes three files: HTML (a timeline that reads like WeChat), CSV (for spreadsheets) and TXT (plain text). A JSON summary is written too, so an AI can analyse the archive.',
-      'step3.outDir': 'Export folder',
-      'step3.outDirHint': 'Where the files are written; leave it empty for the default',
+      'step3.outDir': 'Master folder',
+      'step3.outDirHint': 'Your master folder; each day gets its own subfolder inside it. Leave it empty for the default',
+      'step3.outDirLayout': 'Exports go into a dated subfolder (for example 2026-11-06) inside the master folder. "Open master folder" opens that master folder.',
+      'step3.outDirDay': 'This run wrote to: ',
+      'step3.outDirMaster': 'Master folder: ',
       'step3.outDirPick': 'Choose…',
       'step3.outDirSave': 'Save folder',
       'step3.outDirSaving': 'Saving…',
@@ -1017,20 +1023,31 @@ window.__ModuleLoader__.load({
             onClick: () => saveOutDir(outDir)
           }, savingOutDir ? t('step3.outDirSaving') : t('step3.outDirSave'))
         ),
+        // The folder above is the MASTER folder, not where the files land, so
+        // say so where the user sets it rather than only in the result block.
+        h('p', { className: 'wa-hint' }, t('step3.outDirLayout')),
         outDirNotice !== null ? h('p', { className: 'wa-notice' }, outDirNotice) : null,
         outDirError !== null ? h('p', { className: 'wa-err' }, outDirError) : null,
         exportError !== null ? h('p', { className: 'wa-err' }, exportError) : null,
         exportResult !== null && (exportResult.exported || []).length === 0 && (exportResult.unchanged || []).length > 0
           ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
               h('p', { className: 'wa-kvLabel', style: { margin: 0 } },
-                `${t('step3.result')} · ${exportResult.outDir}`),
+                `${t('step3.result')} · ${t('step3.outDirMaster')}${exportResult.outDir ?? ''}`),
+              exportResult.exportDir
+                ? h('p', { className: 'wa-cardBody', style: { margin: 0 } },
+                    `${t('step3.outDirDay')}${exportResult.exportDir}`)
+                : null,
               h('p', { className: 'wa-cardBody' },
                 `${t('step3.unchanged')}: ` + exportResult.unchanged.map((item) => item.name).join('、')),
               h('p', { className: 'wa-cardBody' }, t('step3.unchangedBody')))
           : exportResult !== null
           ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
               h('p', { className: 'wa-kvLabel', style: { margin: 0 } },
-                `${t('step3.result')} · ${exportResult.outDir}`),
+                `${t('step3.result')} · ${t('step3.outDirMaster')}${exportResult.outDir ?? ''}`),
+              exportResult.exportDir
+                ? h('p', { className: 'wa-cardBody', style: { margin: 0 } },
+                    `${t('step3.outDirDay')}${exportResult.exportDir}`)
+                : null,
               exportResult.bundle
                 ? h('div', { className: 'wa-files' },
                     h('span', { className: 'wa-kvLabel' }, t('step3.bundle')),
@@ -1054,7 +1071,10 @@ window.__ModuleLoader__.load({
                     `${t('step3.skipped')}: ` + exportResult.failures.map((item) => `${item.name}（${item.reason}）`).join('、'))
                 : null,
               h('div', { className: 'wa-actions' },
-                h('button', { type: 'button', className: 'wa-btn', onClick: () => openFolder(exportResult.outDir) }, t('openFolder')))
+                // Deliberately the master folder: the user asked to open the
+                // folder they configured, not the dated subfolder inside it.
+                h('button', { type: 'button', className: 'wa-btn', onClick: () => openFolder(exportResult.outDir) }, t('openFolder'))
+              )
             )
           : h('p', { className: 'wa-cardBody' }, t('step3.none'))
       );

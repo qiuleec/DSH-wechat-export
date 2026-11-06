@@ -88,12 +88,19 @@ try {
   const group = exported.exported.find((item) => item.wxid === '12345678901@chatroom');
   assert(group && group.total === 2, 'the group conversation exports its two messages');
 
-  const bundle = await readFile(join(outDir, `微信聊天记录-${exported.dateTag}.json`), 'utf8');
+  // The configured folder is the master folder; files land in a per-day
+  // subfolder so a month of exports is not one flat heap.
+  assert(exported.exportDir === join(outDir, exported.dateTag),
+    'the export writes into a date subfolder of the master folder');
+  assert(exported.exported.every((item) => item.files.every((file) => file.startsWith(exported.exportDir))),
+    'every exported file lives inside the date subfolder');
+
+  const bundle = await readFile(join(exported.exportDir, `微信聊天记录-${exported.dateTag}.json`), 'utf8');
   const parsed = JSON.parse(bundle);
   assert(parsed.conversations.length === 2, 'the JSON bundle covers every exported conversation');
   // The panel and the agent tool only ever showed the per-chat files, so the
   // summary had to be hunted down by hand. Report its path with the result.
-  assert(exported.bundle === join(outDir, `微信聊天记录-${exported.dateTag}.json`),
+  assert(exported.bundle === join(exported.exportDir, `微信聊天记录-${exported.dateTag}.json`),
     'the export result names the JSON bundle it wrote');
   assert(existsSync(exported.bundle), 'the reported bundle path exists on disk');
   const html = await readFile(friend.files[0], 'utf8');
@@ -151,8 +158,10 @@ try {
   const configuredExport = await service.exportConversations({ days: 0 });
   assert(configuredExport.ok === true, 'exporting without an explicit directory succeeds');
   assert(configuredExport.outDir === chosenDir, 'the export uses the configured directory');
-  assert(existsSync(join(chosenDir, `微信聊天记录-${configuredExport.dateTag}.json`)),
-    'the JSON bundle lands in the configured directory');
+  assert(configuredExport.exportDir === join(chosenDir, configuredExport.dateTag),
+    'the date subfolder is created inside the configured master folder');
+  assert(existsSync(join(chosenDir, configuredExport.dateTag, `微信聊天记录-${configuredExport.dateTag}.json`)),
+    'the JSON bundle lands in the dated subfolder of the configured directory');
 
   const relative = await service.setExportDirectory('relative\nope');
   assert(relative.ok === false && relative.code === 'NOT_ABSOLUTE', 'a relative path is refused');

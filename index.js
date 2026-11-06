@@ -399,7 +399,8 @@ function buildTool(ctx) {
             `数据库密钥：${status.keyPresent ? (status.keyValidatesAccount ? '已保存且可解锁账号' : '已保存但未解锁任何账号') : '未捕获'}`,
             `密钥捕获组件：${status.capture.componentReady ? '可用' : '不可用'}`,
             `微信进程：${status.capture.wechatRunning ? '正在运行' : '未运行'}`,
-            `导出目录：${status.defaultOutDir}${status.outDirConfigured ? '' : '（默认，可在面板或工具里改）'}`,
+            `主文件夹：${status.defaultOutDir}${status.outDirConfigured ? '' : '（默认，可在面板或工具里改）'}`,
+            '导出布局：主文件夹下按导出日期建子文件夹，文件写在当天子文件夹里',
             `增量导出：${status.progressTracked > 0 ? `已有 ${status.progressTracked} 个会话的进度记录` : '尚未记录进度'}`,
             `默认勾选：全部会话自动勾选${status.deselected.length > 0 ? `，其中 ${status.deselected.length} 个已被取消` : ''}`,
           ];
@@ -481,7 +482,7 @@ function buildTool(ctx) {
           const bundleLine = result.bundle ? `\n汇总：${result.bundle}` : '';
           return {
             ok: true,
-            summary: `${result.incremental ? '增量导出' : '已导出'} ${result.exported.length} 个会话到 ${result.outDir}${bundleLine}\n${lines.join('\n')}${unchanged}${skipped}`,
+            summary: `${result.incremental ? '增量导出' : '已导出'} ${result.exported.length} 个会话到 ${result.exportDir}${bundleLine}\n${lines.join('\n')}${unchanged}${skipped}`,
             data: result,
           };
         }

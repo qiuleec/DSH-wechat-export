@@ -385,7 +385,11 @@ assert(populatedShape.text.includes('导出全部会话'), 'the unbounded export
 // same failure the display-name field had: a value with no visible label.
 const outDirInput = populatedShape.attrs.find((attrs) => attrs.tag === 'input' && attrs.className === 'wa-input wa-outDirInput');
 assert(outDirInput !== undefined, 'the export card renders the export-directory input');
-assert(populatedShape.text.includes('导出目录'), 'the export-directory input has a visible label');
+assert(populatedShape.text.includes('主文件夹'), 'the master-folder input has a visible label');
+// The configured folder is the master folder, not where files land: the panel
+// must say so where the user sets it, or "the files are not there" is a mystery.
+// `text` holds whole strings, so a sentence has to be matched as a substring.
+assert(textOf(populatedShape).includes('按导出日期建子文件夹'), 'the panel explains the dated subfolder layout');
 const outDirLabel = populatedShape.attrs.find((attrs) => attrs.tag === 'label' && attrs.title !== undefined
   && attrs.className === 'wa-field wa-fieldGrow');
 assert(outDirLabel !== undefined, 'the export-directory field explains itself through a tooltip');
@@ -402,7 +406,8 @@ for (const language of ['zh', 'en']) {
   const dictionary = localeCalls[0].dictionaries[language];
   for (const key of ['step3.outDir', 'step3.outDirHint', 'step3.outDirPick', 'step3.outDirSave',
     'step3.outDirSaving', 'step3.outDirSaved', 'step3.outDirReset', 'step3.outDirUnavailable',
-    'step3.outDirNeedAbsolute']) {
+    'step3.outDirNeedAbsolute', 'step3.outDirLayout', 'step3.outDirDay', 'step3.outDirMaster',
+    'openFolder']) {
     assert(typeof dictionary[key] === 'string' && dictionary[key].length > 0,
       `the ${language} dictionary defines ${key}`);
   }
@@ -417,7 +422,7 @@ hookState[slot('outDir')] = 'D:/微信导出';
 const filledShape = render();
 const filledInput = filledShape.attrs.find((attrs) => attrs.tag === 'input' && attrs.className === 'wa-input wa-outDirInput');
 assert(filledInput.value === 'D:/微信导出', 'the saved export directory fills the input');
-assert(filledShape.text.includes('导出目录'), 'the label survives the input holding a value');
+assert(filledShape.text.includes('主文件夹'), 'the label survives the input holding a value');
 hookState[slot('outDir')] = '';
 hookState[STATUS_SLOT] = { ...hookState[STATUS_SLOT], outDirConfigured: '' };
 assert(chipLabels.length === KINDS.length + 1, 'every chip and the all chip carry a count');
@@ -517,13 +522,18 @@ for (const language of ['zh', 'en']) {
 // so a finished export must print its path.
 hookState[slot('exportResult')] = {
   outDir: 'D:/导出',
-  bundle: 'D:/导出/微信聊天记录-2026-11-04.json',
-  exported: [{ wxid: 'wxid_a', name: '老王', total: 2, days: 1, files: ['D:/导出/老王.html'] }],
+  exportDir: 'D:/导出/2026-11-04',
+  bundle: 'D:/导出/2026-11-04/微信聊天记录-2026-11-04.json',
+  exported: [{ wxid: 'wxid_a', name: '老王', total: 2, days: 1, files: ['D:/导出/2026-11-04/老王.html'] }],
   failures: [],
 };
 const exportedShape = render();
+assert(textOf(exportedShape).includes('D:/导出/2026-11-04'),
+  'the finished export says which dated subfolder it wrote to');
+assert(textOf(exportedShape).includes('主文件夹') && textOf(exportedShape).includes('本次文件所在'),
+  'the finished export separates the master folder from the day folder');
 assert(exportedShape.text.includes('JSON 汇总'), 'the finished export labels the JSON summary');
-assert(exportedShape.text.includes('D:/导出/微信聊天记录-2026-11-04.json'),
+assert(textOf(exportedShape).includes('D:/导出/2026-11-04/微信聊天记录-2026-11-04.json'),
   'the finished export prints the JSON summary path');
 hookState[slot('exportResult')] = null;
 for (const language of ['zh', 'en']) {
