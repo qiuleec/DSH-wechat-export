@@ -135,7 +135,10 @@ plugin_manager action=set_bundle    target=@local/wechat-archive enabled=true
 - 首次增量（还没有进度记录）覆盖**全部历史**，等同于一次完整导出；
 - 现有文件一个都不会被改动；想重新从最早的消息开始，点「清除导出进度」或让 agent 执行 `progress` + `reset: true`。
 
-完整导出（不勾选增量）不读写进度文件，因此两者可以混用：平时增量，需要一份完整备份时直接完整导出。
+**完整导出也会推进进度。** 「增量」的含义是「上次导出之后的新消息」，而不是「上次增量导出之后」——
+两种导出都算导出，都会更新水位。否则「先完整导出一次，再勾增量」会把整段历史原样再写一遍，
+看起来就像增量没生效（这确实是一个已修复的 bug）。所以两种模式可以放心混用：平时增量，
+需要一份完整备份时直接完整导出，之后接着增量依然只取新增。
 
 每个会话产出三个文件（另有一份 JSON 汇总）：
 
@@ -257,7 +260,7 @@ lib/store.js        默认勾选（存取消集合）与增量导出水位（只
 locale/{zh,en}.json 插件名称与描述（Harness 的插件市场读取这里）
 icon.svg            左侧栏与插件行的图标
 bin/wx_key.dll      密钥捕获组件（第三方，CC BY 4.0，见文末署名）
-test/               10 个测试文件 + fixture.mjs，共 566 条断言，不依赖真实微信数据
+test/               10 个测试文件 + fixture.mjs，共 570 条断言，不依赖真实微信数据
 ```
 
 ## 常见问题
@@ -299,7 +302,7 @@ node test/realdb.test.mjs      # 有真实密钥时校验真实库；没有则�
 for f in test/*.test.mjs; do printf '%-28s ' "$f"; node "$f" >/dev/null 2>&1 && echo ok || echo FAIL; done
 ```
 
-共 566 条断言。测试不依赖真实微信数据：`test/fixture.mjs` 会临时造一个 80 字节 reserve 的明文库，再按 SQLCipher 4
+共 570 条断言。测试不依赖真实微信数据：`test/fixture.mjs` 会临时造一个 80 字节 reserve 的明文库，再按 SQLCipher 4
 布局加密成账号目录，因此无需你的密钥也能验证全链路。
 
 客户端那半没有可 import 的 React（运行时由模块表提供），`test/render.test.mjs` 因此用一个同等调用形状的

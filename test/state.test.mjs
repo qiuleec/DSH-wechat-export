@@ -186,11 +186,16 @@ try {
   assert(afterThird.conversations.find((item) => item.wxid === 'wxid_laowang').lastExportedAt === 1700000300,
     'the watermark advanced to the newest exported message');
 
-  // A full export must not touch the watermarks: only incremental runs do.
+  // A full export is still an export: it must move the watermarks, or the next
+  // incremental run re-exports everything it just wrote. This was a real bug —
+  // running a full export then an incremental one produced identical files.
   const full = await service.exportConversations({ outDir: join(scratch, 'full-exports') });
   assert(full.ok === true && full.incremental === false, 'a full export still works alongside the marks');
   const afterFull = await service.describeProgress();
-  assert(afterFull.tracked === 2, 'a full export leaves the watermarks alone');
+  assert(afterFull.tracked === 2, 'a full export keeps the same number of marks');
+  const afterFullIncremental = await service.exportConversations({ incremental: true, outDir });
+  assert(afterFullIncremental.exported.length === 0, 'an incremental run right after a full export finds nothing new');
+  assert(afterFullIncremental.unchanged.length === 2, 'it reports both conversations as already exported');
 
   const reset = await service.resetExportProgress();
   assert(reset.ok === true, 'progress can be cleared');

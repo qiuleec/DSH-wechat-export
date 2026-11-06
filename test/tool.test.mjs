@@ -207,8 +207,11 @@ try {
   /* ------------------------- incremental and progress ------------------------- */
   // The agent must be able to see and reset the watermarks, and an incremental
   // export must report "nothing new" without being mistaken for a failure.
+  // Earlier steps in this file run full exports, and a full export also records
+  // watermarks, so start from a cleared state rather than assuming a fresh one.
+  await run({ action: 'progress', reset: true });
   const progressEmpty = await run({ action: 'progress' });
-  assert(progressEmpty.ok === true, 'progress succeeds before any incremental export');
+  assert(progressEmpty.ok === true, 'progress succeeds after a reset');
   assert(progressEmpty.data.tracked === 0, 'it reports no marks yet');
   assert(progressEmpty.summary.includes('还没有'), 'it explains how to start one');
 
