@@ -193,6 +193,60 @@ try {
   });
   const clearedBody = JSON.parse(outDirCleared.body);
   assert(clearedBody.ok === true && clearedBody.configured === '', 'an empty value restores the default');
+
+  /* ------------------------ selection and progress ------------------------ */
+  // Both routes expose or mutate plugin state the panel must not invent on its
+  // own, so each is gated and each round-trips.
+  const selection = routes.get('/api/wechat-chat/selection');
+  const progress = routes.get('/api/wechat-chat/progress');
+  assert(Boolean(selection && progress), 'the selection and progress routes are registered');
+
+  const selectionForeign = await call(selection, {
+    method: 'POST',
+    headers: { origin: 'https://evil.example', 'content-type': 'application/json' },
+    body: JSON.stringify({ deselected: ['wxid_x'] }),
+  });
+  assert(selectionForeign.statusCode === 403, 'a foreign Origin cannot change the selection');
+
+  const selectionRead = await call(selection);
+  assert(selectionRead.statusCode === 200, 'the selection route answers GET');
+  const selectionBody = JSON.parse(selectionRead.body);
+  assert(selectionBody.ok === true && Array.isArray(selectionBody.deselected), 'it reports the unticked set');
+
+  const selectionWrite = await call(selection, {
+    method: 'POST',
+    headers: { origin: 'http://127.0.0.1:64321', 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+    body: JSON.stringify({ deselected: ['wxid_a', 'wxid_b'] }),
+  });
+  assert(selectionWrite.statusCode === 200, 'a same-origin selection write is accepted');
+  const selectionWriteBody = JSON.parse(selectionWrite.body);
+  assert(selectionWriteBody.ok === true && selectionWriteBody.count === 2, 'both unticked ids are stored');
+  const rereadSelection = JSON.parse((await call(selection)).body);
+  assert(rereadSelection.deselected.length === 2, 'the stored selection comes back');
+
+  const selectionBadBody = await call(selection, {
+    method: 'POST',
+    headers: { origin: 'http://127.0.0.1:64321', 'content-type': 'application/json' },
+    body: '{"deselected": 5}',
+  });
+  assert(selectionBadBody.statusCode === 200, 'a badly typed selection body is answered, not crashed on');
+  assert(JSON.parse(selectionBadBody.body).ok === false, 'it reports a refusal instead of storing junk');
+
+  const progressRead = await call(progress);
+  assert(progressRead.statusCode === 200, 'the progress route answers GET');
+  const progressBody = JSON.parse(progressRead.body);
+  assert(progressBody.ok === true && progressBody.tracked === 0, 'progress starts empty');
+
+  const progressReset = await call(progress, {
+    method: 'POST',
+    headers: { origin: 'http://127.0.0.1:64321', 'content-type': 'application/json' },
+    body: JSON.stringify({ reset: true }),
+  });
+  assert(progressReset.statusCode === 200, 'a reset is accepted');
+  assert(JSON.parse(progressReset.body).ok === true, 'the reset reports success');
+
+  const progressWrongMethod = await call(progress, { method: 'PUT' });
+  assert(progressWrongMethod.statusCode === 405, 'the progress route rejects other methods');
 } finally {
   await rm(scratch, { recursive: true, force: true }).catch(() => {});
 }

@@ -12,13 +12,17 @@
 import {
   captureDatabaseKey,
   describeEnvironment,
+  describeProgress,
+  describeSelection,
   exportConversations,
   forgetKey,
   listConversations,
   previewConversation,
   readSettings,
+  resetExportProgress,
   revealDirectory,
   setExportDirectory,
+  setSelection,
   writeSettings,
 } from './lib/service.js';
 import { filterByKind } from './lib/wechat.js';
@@ -203,6 +207,32 @@ function registerRoutes(ctx) {
       },
     },
     {
+      // Which conversations are unticked, and the incremental watermarks. Both
+      // are plugin state, so the panel never invents them client-side; that
+      // keeps a second window and the agent tool in agreement with the panel.
+      path: `${API_PREFIX}/selection`,
+      handler: async (request, response) => {
+        if (request.method === 'GET') return sendJson(response, 200, await describeSelection());
+        if (request.method !== 'POST') return sendJson(response, 405, { ok: false, error: 'GET or POST only' });
+        const body = await readJsonBody(request);
+        if (body === null) return sendJson(response, 400, { ok: false, error: '请求体应为 JSON 对象。' });
+        sendJson(response, 200, await setSelection(body.deselected ?? []));
+      },
+    },
+    {
+      // GET reports the watermarks; POST with `reset: true` clears them so the
+      // next incremental export re-covers the full history.
+      path: `${API_PREFIX}/progress`,
+      handler: async (request, response) => {
+        if (request.method === 'GET') return sendJson(response, 200, await describeProgress());
+        if (request.method !== 'POST') return sendJson(response, 405, { ok: false, error: 'GET or POST only' });
+        const body = await readJsonBody(request);
+        if (body === null) return sendJson(response, 400, { ok: false, error: '请求体应为 JSON 对象。' });
+        if (body.reset === true) return sendJson(response, 200, await resetExportProgress());
+        sendJson(response, 200, await describeProgress());
+      },
+    },
+    {
       path: `${API_PREFIX}/reveal`,
       handler: async (request, response) => {
         if (request.method !== 'POST') return sendJson(response, 405, { ok: false, error: 'POST only' });
@@ -277,15 +307,16 @@ Works on the local SQLCipher databases of the account the user is logged into; n
 Actions:
 - "status": environment report — data roots, accounts, key state, whether WeChat is running. Start here.
 - "list": conversations ordered by last activity, with wxid, display name, kind (group / direct / official / subscription / service / system) and last timestamp.
-- "export": write archives for chosen conversations; \`wxids\` selects them, otherwise \`days\`/\`kinds\`/\`groupsOnly\`/\`limit\` filter. \`kinds\` accepts group, direct, official (公众号, i.e. 订阅号 + 服务号), subscription, service and system. Returns the written file paths and per-chat message counts.
+- "export": write archives for chosen conversations; \`wxids\` selects them, otherwise \`days\`/\`kinds\`/\`groupsOnly\`/\`limit\` filter. \`kinds\` accepts group, direct, official (公众号, i.e. 订阅号 + 服务号), subscription, service and system. Returns the written file paths and per-chat message counts. With \`incremental: true\` only messages newer than that conversation's last export are written, into their own files, and conversations with nothing new are reported under \`unchanged\`.
 - "preview": the most recent messages of one conversation, to check before exporting.
 - "capture": restart WeChat with the hook and wait for the login key. Only after the user has closed WeChat and agreed to log in again.
 - "set_out_dir": point exports at a chosen directory (created if missing), or reset to the plugin default
   with an empty outDir.
+- "progress": the per-conversation incremental watermarks (what the next incremental export would pick up). \`reset: true\` clears them so the next incremental run covers full history.
 - "open_folder": reveal the export directory in File Explorer.
 - "forget": delete the stored key.`;
 
-const ACTIONS = ['status', 'list', 'export', 'preview', 'capture', 'open_folder', 'forget', 'set_out_dir'];
+const ACTIONS = ['status', 'list', 'export', 'preview', 'progress', 'capture', 'open_folder', 'forget', 'set_out_dir'];
 
 /**
  * Build the agent-facing tool definition.
@@ -312,6 +343,17 @@ function buildTool(ctx) {
             'official = 公众号 (both 订阅号 and 服务号), subscription = 订阅号, service = 服务号, system = 微信自身占位会话. ' +
             'Empty means every kind. Replaces groupsOnly.',
           items: { type: 'string', enum: ['group', 'direct', 'official', 'subscription', 'service', 'system'] },
+        },
+        incremental: {
+          type: 'boolean',
+          description:
+            'For "export": write only messages newer than the last export of each conversation, into their own '
+            + 'files, and leave the earlier archive untouched. Conversations with nothing new come back under '
+            + 'unchanged instead of failing.',
+        },
+        reset: {
+          type: 'boolean',
+          description: 'For "progress": clear every watermark so the next incremental export covers full history.',
         },
         groupsOnly: { type: 'boolean', description: 'Legacy shorthand for kinds: ["group"].' },
         limit: { type: 'number', description: 'Export at most this many conversations.' },
@@ -358,6 +400,8 @@ function buildTool(ctx) {
             `密钥捕获组件：${status.capture.componentReady ? '可用' : '不可用'}`,
             `微信进程：${status.capture.wechatRunning ? '正在运行' : '未运行'}`,
             `导出目录：${status.defaultOutDir}${status.outDirConfigured ? '' : '（默认，可在面板或工具里改）'}`,
+            `增量导出：${status.progressTracked > 0 ? `已有 ${status.progressTracked} 个会话的进度记录` : '尚未记录进度'}`,
+            `默认勾选：全部会话自动勾选${status.deselected.length > 0 ? `，其中 ${status.deselected.length} 个已被取消` : ''}`,
           ];
           if (!status.keyPresent) lines.push('下一步：需要 action "capture"，请用户先退出微信并同意重新登录一次。');
           return {
@@ -411,6 +455,7 @@ function buildTool(ctx) {
             groupsOnly: args.groupsOnly,
             limit: args.limit,
             outDir: args.outDir,
+            incremental: args.incremental === true,
           });
           if (!result.ok) {
             return { ok: false, error: result.error, code: result.code, summary: `导出失败：${result.error}`, data: result };
@@ -421,9 +466,22 @@ function buildTool(ctx) {
           const skipped = result.failures.length > 0
             ? `\n跳过 ${result.failures.length} 个：${result.failures.map((item) => `${item.name}（${item.reason}）`).join('、')}`
             : '';
+          // An incremental run where nothing is new is a success with no files
+          // written, so it must not read as "exported 0 conversations".
+          if (result.exported.length === 0 && (result.unchanged ?? []).length > 0) {
+            return {
+              ok: true,
+              summary: `没有新消息：${result.unchanged.length} 个会话在上次导出之后都没有新增内容。`,
+              data: result,
+            };
+          }
+          const unchanged = (result.unchanged ?? []).length > 0
+            ? `\n无新消息 ${result.unchanged.length} 个：${result.unchanged.map((item) => item.name).join('、')}`
+            : '';
+          const bundleLine = result.bundle ? `\n汇总：${result.bundle}` : '';
           return {
             ok: true,
-            summary: `已导出 ${result.exported.length} 个会话到 ${result.outDir}\n汇总：${result.bundle}\n${lines.join('\n')}${skipped}`,
+            summary: `${result.incremental ? '增量导出' : '已导出'} ${result.exported.length} 个会话到 ${result.outDir}${bundleLine}\n${lines.join('\n')}${unchanged}${skipped}`,
             data: result,
           };
         }
@@ -450,6 +508,34 @@ function buildTool(ctx) {
             code: result.code,
             summary: result.ok ? result.message : `捕获密钥失败：${result.error}`,
             data: result,
+          };
+        }
+        case 'progress': {
+          if (args.reset === true) {
+            const cleared = await resetExportProgress();
+            return { ok: true, summary: cleared.message, data: cleared };
+          }
+          const progress = await describeProgress();
+          if (progress.tracked === 0) {
+            return {
+              ok: true,
+              summary: '还没有增量导出记录。下次 action "export" 加 incremental: true 会从最早的消息开始。',
+              data: progress,
+            };
+          }
+          const rows = progress.conversations
+            .slice(0, 40)
+            .map((item) => {
+              const when = item.lastExportedAt
+                ? new Date((item.lastExportedAt + 8 * 3600) * 1000).toISOString().replace('T', ' ').slice(0, 16)
+                : '-';
+              return `${item.wxid} | 已导到 ${when}`;
+            })
+            .join('\n');
+          return {
+            ok: true,
+            summary: `增量导出进度：${progress.tracked} 个会话有记录\n${rows}`,
+            data: progress,
           };
         }
         case 'open_folder': {

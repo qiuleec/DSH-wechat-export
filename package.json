@@ -28,6 +28,7 @@
     "client.js",
     "cordis.patch.yml",
     "lib/*.js",
+    "validate-schema.mjs",
     "bin/wx_key.dll",
     "locale/*.json",
     "icon.svg"

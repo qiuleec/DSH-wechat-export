@@ -65,7 +65,7 @@ try {
 
   assert(plugin.inject.includes('webServer'), 'the plugin declares its webServer dependency');
   assert(tools.length === 1, 'exactly one agent tool is registered');
-  assert(routes.length === 9, `the panel exposes ${routes.length} HTTP routes`);
+  assert(routes.length === 11, `the panel exposes ${routes.length} HTTP routes`);
   assert(routes.every((route) => route.path.startsWith('/api/wechat-chat/')), 'every route lives under the plugin prefix');
   assert(new Set(routes.map((route) => route.path)).size === routes.length, 'no two routes collide on a path');
 
@@ -203,6 +203,41 @@ try {
   assert(resetDir.ok === true, 'set_out_dir with an empty path resets the directory');
   const statusReset = await run({ action: 'status' });
   assert(statusReset.data.outDirConfigured === '', 'the reset clears the configured directory');
+
+  /* ------------------------- incremental and progress ------------------------- */
+  // The agent must be able to see and reset the watermarks, and an incremental
+  // export must report "nothing new" without being mistaken for a failure.
+  const progressEmpty = await run({ action: 'progress' });
+  assert(progressEmpty.ok === true, 'progress succeeds before any incremental export');
+  assert(progressEmpty.data.tracked === 0, 'it reports no marks yet');
+  assert(progressEmpty.summary.includes('还没有'), 'it explains how to start one');
+
+  const selectedExport = await run({ action: 'export', wxids: ['wxid_laowang', '12345678901@chatroom'], incremental: false });
+  assert(selectedExport.ok === true, 'a full export of two conversations succeeds');
+
+  const firstIncremental = await run({ action: 'export', wxids: ['wxid_laowang', '12345678901@chatroom'], incremental: true });
+  assert(firstIncremental.ok === true, 'the first incremental export succeeds');
+  assert(firstIncremental.data.exported.every((item) => item.files[0].includes('增量')),
+    'incremental files carry a marker the agent can point at');
+
+  const secondIncremental = await run({ action: 'export', wxids: ['wxid_laowang', '12345678901@chatroom'], incremental: true });
+  assert(secondIncremental.ok === true, 'a second incremental run with nothing new still succeeds');
+  assert(secondIncremental.data.exported.length === 0, 'it writes no files');
+  assert(secondIncremental.summary.includes('没有新消息'), 'the summary says there is nothing new');
+
+  const progressFilled = await run({ action: 'progress' });
+  assert(progressFilled.data.tracked === 2, 'progress lists both conversations after an incremental run');
+  assert(progressFilled.summary.includes('已导到'), 'the summary shows the watermark time');
+
+  const progressReset = await run({ action: 'progress', reset: true });
+  assert(progressReset.ok === true, 'progress with reset clears the marks');
+  const progressAfterReset = await run({ action: 'progress' });
+  assert(progressAfterReset.data.tracked === 0, 'no marks remain after the reset');
+
+  const statusProgress = await run({ action: 'status' });
+  assert(statusProgress.summary.includes('增量导出'), 'status mentions the incremental progress state');
+  assert(statusProgress.summary.includes('默认勾选'), 'status mentions the default tick behaviour');
+  assert(Array.isArray(statusProgress.data.deselected), 'status reports the unticked set the agent must respect');
 
   /* ------------------------------- unknown ------------------------------- */
   const unknown = await run({ action: 'nope' });

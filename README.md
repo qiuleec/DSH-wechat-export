@@ -18,6 +18,8 @@
 - **三种格式同时产出** —— HTML（按天分组的左右气泡、可离线打开、支持深色）、CSV（Excel 直开）、TXT（便于 grep）。
 - **不依赖 Python** —— 纯 Node 实现 SQLCipher 解密（`node:crypto` + `node:zlib` + `node:sqlite`），零 npm 依赖。
 - **导出目录可配置** —— 面板内直接改，或让 agent 用 `set_out_dir` 设一次长期生效。
+- **默认全选** —— 打开面板时所有会话已勾选；手动取消的会话记在 Host 里，重开面板、重启 Harness 都还是取消状态，新出现的会话仍默认勾选。
+- **增量导出** —— 只导出「上次导出之后」的新消息，写成独立文件（文件名带「增量」），既有文件原样不动；没有新消息时明确告诉你「没有新消息」，而不是报错。
 - **agent 工具同源** —— 面板与工具调用同一套服务方法（`lib/service.js`），两边结果永远一致。
 
 ## 环境要求
@@ -91,8 +93,8 @@ plugin_manager action=set_bundle    target=@local/wechat-archive enabled=true
 | 步骤 | 做什么 |
 | --- | --- |
 | 1 · 取得密钥 | 确认环境（数据目录、账号、组件、微信是否在跑），然后捕获密钥 |
-| 2 · 选择会话 | 按名称/wxid 搜索、按类型筛选（群聊 / 私聊 / 公众号 / 订阅号 / 服务号 / 系统）、全选/清空；双击行可预览最近 60 条 |
-| 3 · 导出 | 先确认/修改导出目录，再导出选中会话或"导出全部会话"；结果里直接给文件路径与「打开导出目录」 |
+| 2 · 选择会话 | 打开即**全部勾选**；按名称/wxid 搜索、按类型筛选（群聊 / 私聊 / 公众号 / 订阅号 / 服务号 / 系统）、全选/清空；双击行可预览最近 60 条 |
+| 3 · 导出 | 先确认/修改导出目录，勾选「增量导出」可只导出新消息，再导出选中会话或"导出全部会话"；结果里直接给文件路径与「打开导出目录」 |
 
 ### 导出目录
 
@@ -104,6 +106,36 @@ plugin_manager action=set_bundle    target=@local/wechat-archive enabled=true
 
 保存时 Host 会先创建目录并检查可写，所以路径写错会立刻报错，而不是等一次完整导出跑到最后才失败。
 目录只影响写入位置；显式传 `outDir` 的一次性导出**不会**改动这个保存值。
+
+### 默认勾选
+
+默认行为是**全选**：会话列表一出现，所有会话都已勾选，直接点导出即可。
+
+实现上存的是**被取消的集合**（`selection.json` 里的 `deselected`），而不是被选中的集合。这样有两个直接后果：
+
+- 之后微信里**新出现的会话会自动勾选** —— 若存选中集合，每个新会话都会永远处于未选状态，用户每次都要手动补勾；
+- 取消状态由 Host 保存，所以关掉面板、重启 Harness 之后仍然是取消状态；换一台机器则从「全选」重新开始。
+
+「全选」按钮只对**当前筛选出来的**会话生效（取消它们的不勾选状态），不会偷偷把搜索之外的会话也改掉。
+
+### 增量导出
+
+勾选第 3 步的「增量导出」后，每个会话只写入**上次导出之后**的新消息，写进单独的文件：
+
+```
+家人-微信聊天记录-2026-11-06-增量.html
+家人-微信聊天记录-2026-11-06-增量.csv
+家人-微信聊天记录-2026-11-06-增量.txt
+```
+
+- 进度记在 `progress.json`，按会话保存「最后一条已导出消息」的时间戳与 `local_id`（同一秒内的多条消息靠 `local_id` 区分先后）；
+- 进度**只前进不后退** —— 一次刻意限定旧时间窗口的导出不会把水位拉回去，否则下次增量会把已经导出的消息再写一遍；
+- 同一天跑两次增量，第二个文件会自动带时间后缀，不会覆盖第一个（两批消息范围不同）；
+- 某会话没有新消息时不会失败，而是列在结果的「没有新消息」里；全部会话都没新消息时，面板直接说明这一点；
+- 首次增量（还没有进度记录）覆盖**全部历史**，等同于一次完整导出；
+- 现有文件一个都不会被改动；想重新从最早的消息开始，点「清除导出进度」或让 agent 执行 `progress` + `reset: true`。
+
+完整导出（不勾选增量）不读写进度文件，因此两者可以混用：平时增量，需要一份完整备份时直接完整导出。
 
 每个会话产出三个文件（另有一份 JSON 汇总）：
 
@@ -119,14 +151,16 @@ JSON 汇总不是每个会话一份，而是每次导出一个：当天第一次
 
 ### 交给 agent 用
 
-工具 `wechat_archive` 的 `action`：`status` / `list` / `export` / `preview` / `capture` /
-`set_out_dir` / `open_folder` / `forget`。例如：
+工具 `wechat_archive` 的 `action`：`status` / `list` / `export` / `preview` / `progress` /
+`capture` / `set_out_dir` / `open_folder` / `forget`。例如：
 
 - 「看看本机微信有哪些群聊」→ `action: "list", kinds: ["group"]`
 - 「把最近 7 天活跃的群导出成 CSV 给我」→ `action: "export", kinds: ["group"], days: 7`
 - 「列出我关注的订阅号」→ `action: "list", kinds: ["subscription"]`
 - 「先给我看看老王最近 30 条消息」→ `action: "preview", wxid: "..."`  
 - 「以后都导到 D:\微信备份」→ `action: "set_out_dir", outDir: "D:\微信备份"`（`outDir: ""` 恢复默认）
+- 「只导出几个群的新消息」→ `action: "export", kinds: ["group"], incremental: true`
+- 「增量导出到哪了」→ `action: "progress"`；「从头再来」→ `action: "progress", reset: true`
 
 `kinds` 可选 `group`（群聊）/ `direct`（私聊，含企业微信单聊）/ `official`（公众号，即订阅号
 + 服务号）/ `subscription`（订阅号）/ `service`（服务号）/ `system`（微信自己的占位会话，
@@ -143,7 +177,8 @@ JSON 汇总不是每个会话一份，而是每次导出一个：当天第一次
 | 私聊 | 其余账号，包括 `@openim` 企业微信单聊 |
 | 系统 | `notifymessage`、`filehelper`、`brandsessionholder`、`@placeholder_foldgroup` 等 |
 
-面板与工具调用的是**同一套服务方法**（`lib/service.js`），所以两边结果永远一致。
+面板与工具调用的是**同一套服务方法**（`lib/service.js`），所以两边结果永远一致。默认勾选集合同样由 Host 保管，
+agent 在 `status` 里能看到它（`data.deselected`），因此「面板上取消掉的会话」不会在工具里被当成要导出的目标。
 
 ## 会看到什么内容
 
@@ -217,10 +252,12 @@ lib/wechat.js       账号发现、会话列举、类型判定、消息解码与
 lib/capture.js      koffi + bin/wx_key.dll：只对已加载 Weixin.dll 的进程挂载、轮询密钥
 lib/export.js       HTML / CSV / TXT / JSON 汇总的写出
 lib/service.js      面板与工具共用的服务方法（所有操作返回 {ok, error, code}）
+lib/paths.js        插件状态文件的唯一来源（设置、密钥、勾选、进度、默认导出目录）
+lib/store.js        默认勾选（存取消集合）与增量导出水位（只前进不后退）
 locale/{zh,en}.json 插件名称与描述（Harness 的插件市场读取这里）
 icon.svg            左侧栏与插件行的图标
 bin/wx_key.dll      密钥捕获组件（第三方，CC BY 4.0，见文末署名）
-test/               9 个测试文件 + fixture.mjs，共 427 条断言，不依赖真实微信数据
+test/               10 个测试文件 + fixture.mjs，共 566 条断言，不依赖真实微信数据
 ```
 
 ## 常见问题
@@ -250,7 +287,8 @@ node test/pipeline.test.mjs    # 合成账号目录端到端（发现→解锁�
 node test/service.test.mjs     # 设置读写、筛选、预览、导出编排、目录守卫
 node test/kinds.test.mjs       # 会话类型判定：biz_info.type、@chatroom、@openim、公众号伞形筛选
 node test/routes.test.mjs      # 同源校验、方法/坏 JSON/超长 body
-node test/tool.test.mjs        # agent 工具的 8 个 action
+node test/tool.test.mjs        # agent 工具的 9 个 action
+node test/state.test.mjs       # 默认勾选、增量水位、损坏状态的降级
 node test/render.test.mjs      # 客户端：slot 注册、图标、面板渲染、样式生效与清理
 node test/realdb.test.mjs      # 有真实密钥时校验真实库；没有则自动跳过
 ```
@@ -261,7 +299,7 @@ node test/realdb.test.mjs      # 有真实密钥时校验真实库；没有则�
 for f in test/*.test.mjs; do printf '%-28s ' "$f"; node "$f" >/dev/null 2>&1 && echo ok || echo FAIL; done
 ```
 
-共 427 条断言。测试不依赖真实微信数据：`test/fixture.mjs` 会临时造一个 80 字节 reserve 的明文库，再按 SQLCipher 4
+共 566 条断言。测试不依赖真实微信数据：`test/fixture.mjs` 会临时造一个 80 字节 reserve 的明文库，再按 SQLCipher 4
 布局加密成账号目录，因此无需你的密钥也能验证全链路。
 
 客户端那半没有可 import 的 React（运行时由模块表提供），`test/render.test.mjs` 因此用一个同等调用形状的

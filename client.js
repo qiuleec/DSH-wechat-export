@@ -92,6 +92,14 @@ window.__ModuleLoader__.load({
       'step3.skipped': '跳过',
       'step3.none': '还没有导出记录',
       'step3.needSelection': '请先在上一步选择至少一个会话。',
+      'step3.incremental': '增量导出',
+      'step3.incrementalHint': '只导出上次导出之后的新消息，之前的文件不会被改动',
+      'step3.incrementalTracked': '已有 {n} 个会话的导出进度，本次只写入更新的消息',
+      'step3.incrementalFirstRun': '还没有导出进度：第一次增量导出会覆盖全部历史',
+      'step3.incrementalReset': '清除导出进度',
+      'step3.incrementalResetDone': '已清除导出进度。',
+      'step3.unchanged': '没有新消息',
+      'step3.unchangedBody': '这些会话在上次导出之后没有新增内容。',
 
       'preview.title': '预览最近消息',
       'preview.loading': '正在读取…',
@@ -184,6 +192,14 @@ window.__ModuleLoader__.load({
       'step3.skipped': 'Skipped',
       'step3.none': 'Nothing exported yet',
       'step3.needSelection': 'Select at least one conversation above.',
+      'step3.incremental': 'Incremental export',
+      'step3.incrementalHint': 'Write only the messages that arrived after the last export; earlier files stay untouched',
+      'step3.incrementalTracked': '{n} conversations have an export mark; only newer messages are written',
+      'step3.incrementalFirstRun': 'No export mark yet: the first incremental run covers the full history',
+      'step3.incrementalReset': 'Clear export marks',
+      'step3.incrementalResetDone': 'Export marks cleared.',
+      'step3.unchanged': 'Nothing new',
+      'step3.unchangedBody': 'These conversations had no new messages since the last export.',
 
       'preview.title': 'Recent messages',
       'preview.loading': 'Reading…',
@@ -315,6 +331,7 @@ window.__ModuleLoader__.load({
 .wa-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .wa-row[data-selected="true"]{background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.12))}
 .wa-check{width:14px;height:14px;flex:none;accent-color:var(--dsw-alias-brand-primary);cursor:pointer}
+.wa-checkInline{margin:0}
 .wa-tag{font-size:10px;line-height:1;padding:3px 6px;border-radius:4px;flex:none;
   background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary)}
 .wa-tag[data-group="true"]{color:var(--dsw-alias-state-success-primary)}
@@ -322,6 +339,7 @@ window.__ModuleLoader__.load({
 .wa-tag[data-kind="system"]{color:var(--dsw-alias-label-tertiary)}
 .wa-field{display:inline-flex;align-items:center;gap:6px}
 .wa-fieldGrow{flex:1;min-width:0}
+.wa-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;margin:0}
 .wa-outDirRow{align-items:center}
 .wa-outDirInput{flex:1;min-width:200px}
 .wa-notice{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px}
@@ -413,7 +431,13 @@ window.__ModuleLoader__.load({
       const [capturing, setCapturing] = React.useState(false);
       const [sessions, setSessions] = React.useState(null);
       const [sessionsError, setSessionsError] = React.useState(null);
-      const [selected, setSelected] = React.useState(() => new Set());
+      // Selection is stored as the *unticked* set: everything is selected by
+      // default, including conversations that did not exist last time, and only
+      // an explicit untick has to be remembered across restarts.
+      const [deselected, setDeselected] = React.useState(() => new Set());
+      const [incremental, setIncremental] = React.useState(false);
+      const [progressTracked, setProgressTracked] = React.useState(0);
+      const [progressNotice, setProgressNotice] = React.useState(null);
       const [search, setSearch] = React.useState('');
       const [kinds, setKinds] = React.useState(() => new Set());
       const [days, setDays] = React.useState('0');
@@ -448,6 +472,10 @@ window.__ModuleLoader__.load({
           if (typeof value.outDirConfigured === 'string') {
             setOutDir((current) => current || value.outDirConfigured);
           }
+          // The unticked set is Host state, so the panel paints whatever the
+          // Host reports rather than keeping a private copy that could drift.
+          if (Array.isArray(value.deselected)) setDeselected(new Set(value.deselected));
+          if (typeof value.progressTracked === 'number') setProgressTracked(value.progressTracked);
           return value;
         } catch (error) {
           setStatusError(error.message);
@@ -541,7 +569,7 @@ window.__ModuleLoader__.load({
         try {
           await api('/forget', { method: 'POST', body: '{}' });
           setSessions(null);
-          setSelected(new Set());
+          setDeselected(new Set());
           setExportResult(null);
           await loadStatus();
         } catch (error) {
@@ -621,9 +649,23 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const resetProgress = async () => {
+        try {
+          const value = await api('/progress', { method: 'POST', body: JSON.stringify({ reset: true }) });
+          if (value && value.ok) {
+            setProgressTracked(0);
+            setProgressNotice(value.message || t('step3.incrementalResetDone'));
+          } else {
+            setProgressNotice((value && value.error) || null);
+          }
+        } catch (error) {
+          setProgressNotice(error.message);
+        }
+      };
+
       const runExport = async (mode) => {
         if (exporting) return;
-        const chosen = [...selected];
+        const chosen = [...selectedSet];
         if (mode === 'selected' && chosen.length === 0) {
           setExportError(t('step3.needSelection'));
           return;
@@ -632,12 +674,13 @@ window.__ModuleLoader__.load({
         setExportError(null);
         setExportResult(null);
         const payload = mode === 'selected'
-          ? { wxids: chosen, selfName: selfName || undefined }
+          ? { wxids: chosen, selfName: selfName || undefined, incremental }
           : {
               days: Number(days) || 0,
               kinds: [...kinds],
               limit: 30,
-              selfName: selfName || undefined
+              selfName: selfName || undefined,
+              incremental
             };
         try {
           const value = await api('/export', { method: 'POST', body: JSON.stringify(payload) });
@@ -668,6 +711,11 @@ window.__ModuleLoader__.load({
         if (!query) return true;
         return session.name.toLowerCase().includes(query) || session.wxid.toLowerCase().includes(query);
       });
+      // The tick state is derived, never stored twice: a session is selected
+      // unless the user unticked it, so a conversation that appears for the
+      // first time is selected without any extra bookkeeping.
+      const selectedSet = new Set(allSessions.filter((session) => !deselected.has(session.wxid)).map((session) => session.wxid));
+      const selectedCount = selectedSet.size;
       const kindCounts = { all: allSessions.length };
       for (const session of allSessions) {
         kindCounts[session.kind] = (kindCounts[session.kind] ?? 0) + 1;
@@ -684,24 +732,35 @@ window.__ModuleLoader__.load({
         });
       };
 
+      const persistDeselected = async (next) => {
+        setDeselected(next);
+        try {
+          await api('/selection', { method: 'POST', body: JSON.stringify({ deselected: [...next] }) });
+        } catch (error) {
+          // The tick state stays usable even if the store cannot be written;
+          // the next successful toggle rewrites the whole set anyway.
+          setStatusError(error.message);
+        }
+      };
+
       const toggle = (wxid) => {
-        setSelected((previous) => {
-          const next = new Set(previous);
-          if (next.has(wxid)) next.delete(wxid);
-          else next.add(wxid);
-          return next;
-        });
+        const next = new Set(deselected);
+        if (next.has(wxid)) next.delete(wxid);
+        else next.add(wxid);
+        persistDeselected(next);
       };
 
       const selectAllVisible = () => {
-        setSelected((previous) => {
-          const next = new Set(previous);
-          for (const session of visible) next.add(session.wxid);
-          return next;
-        });
+        const next = new Set(deselected);
+        for (const session of visible) next.delete(session.wxid);
+        persistDeselected(next);
       };
 
-      const clearSelection = () => setSelected(new Set());
+      const clearSelection = () => {
+        const next = new Set(deselected);
+        for (const session of visible) next.add(session.wxid);
+        persistDeselected(next);
+      };
 
       /* ------------------------------ render ------------------------------ */
       const keyState = !status
@@ -801,7 +860,7 @@ window.__ModuleLoader__.load({
       const listCard = h('div', { className: 'wa-card' },
         h('div', { className: 'wa-cardHead' },
           h('h2', { className: 'wa-cardTitle' }, t('step2.title')),
-          h('span', { className: 'wa-pill' }, t('step2.selected').replace('{n}', String(selected.size)))
+          h('span', { className: 'wa-pill' }, t('step2.selected').replace('{n}', String(selectedCount)))
         ),
         !keyOk
           ? h('p', { className: 'wa-cardBody' }, t('step2.needKey'))
@@ -830,7 +889,7 @@ window.__ModuleLoader__.load({
                   }, `${t('step2.kind.' + kind)} ${countFor(kind)}`))
                 ),
                 h('button', { type: 'button', className: 'wa-btn', onClick: selectAllVisible }, t('step2.selectAll')),
-                h('button', { type: 'button', className: 'wa-btn', onClick: clearSelection, disabled: selected.size === 0 }, t('step2.selectNone'))
+                h('button', { type: 'button', className: 'wa-btn', onClick: clearSelection, disabled: selectedCount === 0 }, t('step2.selectNone'))
               ),
               sessionsError !== null
                 ? h('p', { className: 'wa-err' }, sessionsError)
@@ -843,7 +902,7 @@ window.__ModuleLoader__.load({
                       visible.map((session) => h('div', {
                         key: session.wxid,
                         className: 'wa-row',
-                        'data-selected': selected.has(session.wxid) ? 'true' : 'false',
+                        'data-selected': selectedSet.has(session.wxid) ? 'true' : 'false',
                         onClick: () => toggle(session.wxid),
                         onDoubleClick: () => runPreview(session.wxid),
                         title: session.wxid
@@ -851,7 +910,7 @@ window.__ModuleLoader__.load({
                         h('input', {
                           type: 'checkbox',
                           className: 'wa-check',
-                          checked: selected.has(session.wxid),
+                          checked: selectedSet.has(session.wxid),
                           onChange: () => toggle(session.wxid),
                           onClick: (event) => event.stopPropagation()
                         }),
@@ -879,9 +938,9 @@ window.__ModuleLoader__.load({
             ),
             h('button', {
               type: 'button', className: 'wa-btn wa-btnPrimary',
-              disabled: exporting || !keyOk || selected.size === 0,
+              disabled: exporting || !keyOk || selectedCount === 0,
               onClick: () => runExport('selected')
-            }, exporting ? t('step3.exporting') : `${t('step3.export')}（${selected.size}）`),
+            }, exporting ? t('step3.exporting') : `${t('step3.export')}（${selectedCount}）`),
             h('button', {
               type: 'button', className: 'wa-btn',
               disabled: exporting || !keyOk,
@@ -905,6 +964,32 @@ window.__ModuleLoader__.load({
             h('option', { value: '90' }, '90')
           )
         ),
+        // Incremental export: a mode, not a second button, so the "export
+        // selected" and "export all" buttons keep a single meaning.
+        h('label', { className: 'wa-field', title: t('step3.incrementalHint') },
+          h('input', {
+            className: 'wa-check wa-checkInline', type: 'checkbox', checked: incremental,
+            onChange: (event) => {
+              setIncremental(event.target.checked);
+              setProgressNotice(null);
+            }
+          }),
+          h('span', { className: 'wa-kvLabel' }, t('step3.incremental'))
+        ),
+        incremental
+          ? h('p', { className: 'wa-cardBody wa-hint' },
+              progressTracked > 0
+                ? t('step3.incrementalTracked').replace('{n}', String(progressTracked))
+                : t('step3.incrementalFirstRun'))
+          : null,
+        incremental
+          ? h('div', { className: 'wa-toolbar' },
+              h('button', {
+                type: 'button', className: 'wa-btn', disabled: exporting,
+                onClick: resetProgress
+              }, t('step3.incrementalReset')))
+          : null,
+        progressNotice !== null ? h('p', { className: 'wa-notice' }, progressNotice) : null,
         // The folder is plugin state, so it is edited here but saved by the
         // Host: a typo is reported while the user is still looking at the field.
         h('div', { className: 'wa-toolbar wa-outDirRow' },
@@ -935,7 +1020,14 @@ window.__ModuleLoader__.load({
         outDirNotice !== null ? h('p', { className: 'wa-notice' }, outDirNotice) : null,
         outDirError !== null ? h('p', { className: 'wa-err' }, outDirError) : null,
         exportError !== null ? h('p', { className: 'wa-err' }, exportError) : null,
-        exportResult !== null
+        exportResult !== null && (exportResult.exported || []).length === 0 && (exportResult.unchanged || []).length > 0
+          ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+              h('p', { className: 'wa-kvLabel', style: { margin: 0 } },
+                `${t('step3.result')} · ${exportResult.outDir}`),
+              h('p', { className: 'wa-cardBody' },
+                `${t('step3.unchanged')}: ` + exportResult.unchanged.map((item) => item.name).join('、')),
+              h('p', { className: 'wa-cardBody' }, t('step3.unchangedBody')))
+          : exportResult !== null
           ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
               h('p', { className: 'wa-kvLabel', style: { margin: 0 } },
                 `${t('step3.result')} · ${exportResult.outDir}`),
@@ -953,6 +1045,10 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'wa-files' },
                   item.files.map((file) => h('span', { className: 'wa-file', key: file }, file)))
               )),
+              exportResult.unchanged && exportResult.unchanged.length > 0
+                ? h('p', { className: 'wa-cardBody' },
+                    `${t('step3.unchanged')}: ` + exportResult.unchanged.map((item) => item.name).join('、'))
+                : null,
               exportResult.failures && exportResult.failures.length > 0
                 ? h('p', { className: 'wa-cardBody' },
                     `${t('step3.skipped')}: ` + exportResult.failures.map((item) => `${item.name}（${item.reason}）`).join('、'))

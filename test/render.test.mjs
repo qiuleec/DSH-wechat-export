@@ -263,14 +263,50 @@ const handlers = shape.attrs.map((attrs) => attrs.onClick).filter((handler) => h
 assert(handlers.length > 0, 'the panel wires up click handlers');
 assert(handlers.every((handler) => typeof handler === 'function'), 'every click handler is a function');
 
+/* -------------------------- hook slot discovery --------------------------
+ * The panel's state slots are positional, and this test seeds them by index.
+ * Deriving the indexes from the source means adding a useState cannot quietly
+ * point an assertion at the wrong piece of state — which is exactly what
+ * happened when selection moved to a Host-owned "deselected" set.
+ */
+
+function hookSlots(sourceText) {
+  const start = sourceText.indexOf('function WeChatPanel(');
+  if (start < 0) throw new Error('WeChatPanel not found in client.js');
+  // Stop at the next top-level function so hooks outside the panel cannot shift
+  // the indexes.
+  const rest = sourceText.slice(start);
+  const stop = rest.indexOf('\n    /* ------------------------------------------------------------------ */\n    /* Registration');
+  const body = stop > 0 ? rest.slice(0, stop) : rest;
+  const slots = new Map();
+  let index = 0;
+  for (const match of body.matchAll(/React\.(useState|useRef|useCallback|useEffect)\b/g)) {
+    if (match[1] === 'useState' || match[1] === 'useRef') {
+      const head = body.slice(Math.max(0, match.index - 160), match.index);
+      const named = match[1] === 'useState'
+        ? head.match(/const\s*\[\s*([A-Za-z0-9_]+)\s*,\s*[A-Za-z0-9_]+\s*\]\s*=\s*$/)
+        : head.match(/const\s+([A-Za-z0-9_]+)\s*=\s*$/);
+      if (named) slots.set(named[1], index);
+    }
+    index += 1;
+  }
+  return slots;
+}
+
+const SLOTS = hookSlots(source);
+const slot = (name) => {
+  if (!SLOTS.has(name)) throw new Error(`no hook slot named ${name}`);
+  return SLOTS.get(name);
+};
+
 /* ------------------------ the populated panel ------------------------ */
 
 // The first render has no key, so it takes the "finish step 1 first" branch and
 // never reaches the conversation list. Seed the two hook slots the component
 // reads for status and sessions — they are its first and sixth useState calls —
 // to exercise the branch that actually renders the kind chips.
-const STATUS_SLOT = 0;
-const SESSIONS_SLOT = 5;
+const STATUS_SLOT = slot('status');
+const SESSIONS_SLOT = slot('sessions');
 hookState[STATUS_SLOT] = {
   ok: true,
   dataRoots: ['C:/Users/me/Documents/xwechat_files'],
@@ -293,6 +329,8 @@ hookState[SESSIONS_SLOT] = {
     { wxid: 'notifymessage', name: '服务通知', isGroup: false, kind: 'system', lastTimestamp: 1680000000 },
   ],
 };
+
+const textOf = (shapeValue) => shapeValue.text.join(' ').replace(/\s+/g, ' ');
 
 const render = () => {
   hookCursor = 0;
@@ -330,12 +368,12 @@ assert(selfNameInput !== undefined, 'the export card renders the self-name input
 assert(populatedShape.text.includes('我的显示名'), 'the self-name input has a visible label');
 // The saved name arrives with the status response, so seed that one slot and
 // re-render rather than asserting against the initial empty state.
-hookState[11] = '我';
+hookState[slot('selfName')] = '我';
 const namedShape = render();
 const namedInput = namedShape.attrs.find((attrs) => attrs.tag === 'input' && attrs.type === 'text');
 assert(namedInput.value === '我', 'the saved display name fills the input');
 assert(namedShape.text.includes('我的显示名'), 'the label survives the input holding a value');
-hookState[11] = '';
+hookState[slot('selfName')] = '';
 assert(populatedShape.attrs.some((attrs) => attrs.tag === 'label' && attrs.title !== undefined),
   'the self-name field explains itself through a tooltip');
 // "导出最近 ∞ 天" read as a defect; an unbounded range says so plainly.
@@ -375,18 +413,109 @@ assert(typeof outDirInput.onKeyDown === 'function', 'pressing Enter in the field
 // A configured directory fills the field, and the label must survive that —
 // exactly the failure the display-name field had.
 hookState[STATUS_SLOT] = { ...hookState[STATUS_SLOT], outDirConfigured: 'D:/微信导出' };
-hookState[12] = 'D:/微信导出';
+hookState[slot('outDir')] = 'D:/微信导出';
 const filledShape = render();
 const filledInput = filledShape.attrs.find((attrs) => attrs.tag === 'input' && attrs.className === 'wa-input wa-outDirInput');
 assert(filledInput.value === 'D:/微信导出', 'the saved export directory fills the input');
 assert(filledShape.text.includes('导出目录'), 'the label survives the input holding a value');
-hookState[12] = '';
+hookState[slot('outDir')] = '';
 hookState[STATUS_SLOT] = { ...hookState[STATUS_SLOT], outDirConfigured: '' };
 assert(chipLabels.length === KINDS.length + 1, 'every chip and the all chip carry a count');
 
+/* --------------------- default tick state --------------------- */
+
+// Every conversation is ticked without the user doing anything, and the pill
+// reports that count. This is the whole point of storing the *unticked* set.
+assert(textOf(populatedShape).includes('已选 5 个'), 'all conversations are selected by default');
+
+const rowChecks = populatedShape.attrs.filter((attrs) => attrs.className === 'wa-check');
+assert(rowChecks.length === 5, 'every conversation row carries a checkbox');
+assert(rowChecks.every((attrs) => attrs.checked === true), 'every checkbox starts ticked');
+
+// Unticking one persists it and updates the count; the rest stay ticked.
+const deselectedSlot = slot('deselected');
+hookState[deselectedSlot] = new Set(['wxid_laowang']);
+const partiallySelected = render();
+assert(textOf(partiallySelected).includes('已选 4 个'), 'an unticked conversation lowers the selected count');
+const partialChecks = partiallySelected.attrs.filter((attrs) => attrs.className === 'wa-check');
+assert(partialChecks.filter((attrs) => attrs.checked === true).length === 4, 'the remaining four stay ticked');
+
+// Re-ticking through the row checkbox must clear the untick, not add a tick.
+const rowForFriend = partiallySelected.attrs.find(
+  (attrs) => attrs.className === 'wa-row' && attrs.title === 'wxid_laowang',
+);
+assert(rowForFriend !== undefined, 'the unticked row still renders');
+assert(typeof rowForFriend.onClick === 'function', 'the row is clickable');
+
+// A conversation that did not exist before is ticked even when others are not:
+// the unticked set cannot accidentally hide a brand-new chat.
+hookState[SESSIONS_SLOT] = {
+  ...hookState[SESSIONS_SLOT],
+  sessions: [
+    ...hookState[SESSIONS_SLOT].sessions,
+    { wxid: 'wxid_brand_new', name: '新联系人', isGroup: false, kind: 'direct', lastTimestamp: 1700000300 },
+  ],
+};
+const withNewcomer = render();
+assert(textOf(withNewcomer).includes('已选 5 个'), 'a conversation appearing later is selected without being listed');
+assert(withNewcomer.attrs.filter((attrs) => attrs.className === 'wa-check' && attrs.checked === true).length === 5,
+  'the newcomer is ticked while the unticked one stays unticked');
+hookState[deselectedSlot] = new Set();
+
+/* --------------------- incremental export control --------------------- */
+
+// The mode is a checkbox, not a third export button, so both export buttons
+// keep a single meaning; the hint differs for the first run and later runs.
+const incrementalBox = populatedShape.attrs.find(
+  (attrs) => attrs.className === 'wa-check wa-checkInline' && attrs.type === 'checkbox',
+);
+assert(incrementalBox !== undefined, 'the export card offers an incremental toggle');
+assert(textOf(populatedShape).includes('增量导出'), 'the toggle has a visible label');
+assert(typeof incrementalBox.onChange === 'function', 'toggling it is wired');
+
+const incrementalSlot = slot('incremental');
+hookState[incrementalSlot] = true;
+const incrementalView = render();
+assert(textOf(incrementalView).includes('第一次增量导出'), 'the first incremental run is described as covering full history');
+assert(textOf(incrementalView).includes('清除导出进度'), 'the panel offers to clear the watermarks');
+
+hookState[slot('progressTracked')] = 7;
+const trackedView = render();
+assert(textOf(trackedView).includes('已有 7 个会话'), 'the hint counts the conversations that already have a mark');
+
+hookState[incrementalSlot] = false;
+hookState[slot('progressTracked')] = 0;
+
+// An incremental run with nothing new is a success, so the result block must
+// explain it instead of rendering an empty file list.
+hookState[slot('exportResult')] = {
+  ok: true,
+  incremental: true,
+  outDir: 'D:/导出',
+  bundle: null,
+  exported: [],
+  unchanged: [{ wxid: 'wxid_laowang', name: '老王' }],
+  failures: [],
+};
+const nothingNew = render();
+assert(textOf(nothingNew).includes('没有新消息'), 'a run with nothing new says so');
+assert(textOf(nothingNew).includes('老王'), 'it names the conversation that had nothing new');
+assert(textOf(nothingNew).includes('在上次导出之后没有新增内容'), 'it explains why nothing was written');
+hookState[slot('exportResult')] = null;
+
+for (const language of ['zh', 'en']) {
+  const dictionary = localeCalls[0].dictionaries[language];
+  for (const key of ['step3.incremental', 'step3.incrementalHint', 'step3.incrementalTracked',
+    'step3.incrementalFirstRun', 'step3.incrementalReset', 'step3.incrementalResetDone',
+    'step3.unchanged', 'step3.unchangedBody']) {
+    assert(typeof dictionary[key] === 'string' && dictionary[key].length > 0,
+      `the ${language} dictionary defines ${key}`);
+  }
+}
+
 // The JSON summary is written next to the per-chat files but was never shown,
 // so a finished export must print its path.
-hookState[17] = {
+hookState[slot('exportResult')] = {
   outDir: 'D:/导出',
   bundle: 'D:/导出/微信聊天记录-2026-11-04.json',
   exported: [{ wxid: 'wxid_a', name: '老王', total: 2, days: 1, files: ['D:/导出/老王.html'] }],
@@ -396,7 +525,7 @@ const exportedShape = render();
 assert(exportedShape.text.includes('JSON 汇总'), 'the finished export labels the JSON summary');
 assert(exportedShape.text.includes('D:/导出/微信聊天记录-2026-11-04.json'),
   'the finished export prints the JSON summary path');
-hookState[17] = null;
+hookState[slot('exportResult')] = null;
 for (const language of ['zh', 'en']) {
   assert(typeof localeCalls[0].dictionaries[language]['step3.bundle'] === 'string',
     `the ${language} dictionary labels the JSON summary`);
@@ -404,20 +533,20 @@ for (const language of ['zh', 'en']) {
 
 // Clicking a chip must toggle it, which requires the handler to reach setKinds.
 const groupChip = chipButtons.find((attrs) => attrs['data-kind'] === 'group');
-const before = hookState[9];
+const before = hookState[slot('kinds')];
 groupChip.onClick();
-assert(hookState[9] !== before && hookState[9].has('group'), 'clicking a chip adds its kind to the filter');
+assert(hookState[slot('kinds')] !== before && hookState[slot('kinds')].has('group'), 'clicking a chip adds its kind to the filter');
 groupChip.onClick();
-assert(!hookState[9].has('group'), 'clicking it again removes the kind');
-hookState[9] = new Set(['group']);
+assert(!hookState[slot('kinds')].has('group'), 'clicking it again removes the kind');
+hookState[slot('kinds')] = new Set(['group']);
 const afterShape = render();
 assert(afterShape.attrs.filter((attrs) => attrs.tag === 'span' && attrs['data-kind'] !== undefined).length === 1,
   'filtering to 群聊 leaves only the group row visible');
-hookState[9] = new Set(['official']);
+hookState[slot('kinds')] = new Set(['official']);
 const officialView = render();
 assert(officialView.attrs.filter((attrs) => attrs.tag === 'span' && attrs['data-kind'] !== undefined).length === 2,
   'filtering to 公众号 shows 订阅号 and 服务号 rows');
-hookState[9] = new Set();
+hookState[slot('kinds')] = new Set();
 
 // Rows carry a kind tag so a mixed list is readable without reading the chips.
 const rowTags = populatedShape.attrs.filter((attrs) => attrs.tag === 'span' && attrs['data-kind'] !== undefined);
