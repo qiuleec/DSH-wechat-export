@@ -163,7 +163,27 @@ try {
   assert(existsSync(join(chosenDir, configuredExport.dateTag, `微信聊天记录-${configuredExport.dateTag}.json`)),
     'the JSON bundle lands in the dated subfolder of the configured directory');
 
-  const relative = await service.setExportDirectory('relative\nope');
+  // A forward-slash path is what the panel usually receives (the placeholder
+  // prints `C:/...`), and Explorer opens the PARENT when it is handed one. Both
+  // the stored value and the reveal argument must therefore be the backslash
+  // form, otherwise "open master folder" lands one level up.
+  const slashedDir = join(scratch, 'slashed-exports').replaceAll(String.fromCharCode(92), '/');
+  const setSlashed = await service.setExportDirectory(slashedDir);
+  assert(setSlashed.ok === true, 'a forward-slash absolute path is accepted');
+  assert(setSlashed.configured === join(scratch, 'slashed-exports'),
+    'a forward-slash path is stored in backslash form');
+  const slashedEnv = await service.describeEnvironment();
+  assert(slashedEnv.outDirConfigured === join(scratch, 'slashed-exports'),
+    'the environment reports the backslash form');
+
+  const revealed = await service.revealDirectory(slashedDir);
+  assert(revealed.ok === true, 'revealing the configured directory succeeds');
+  assert(revealed.path === join(scratch, 'slashed-exports'),
+    'the revealed path is the backslash form Explorer opens verbatim');
+  assert(service.explorerPath('C:/Users/me/exports') === ['C:', 'Users', 'me', 'exports'].join(String.fromCharCode(92)),
+    'explorerPath turns a forward-slash path into one Explorer opens verbatim');
+
+  const relative = await service.setExportDirectory('relative' + String.fromCharCode(92) + 'nope');
   assert(relative.ok === false && relative.code === 'NOT_ABSOLUTE', 'a relative path is refused');
 
   const reset = await service.setExportDirectory('   ');
